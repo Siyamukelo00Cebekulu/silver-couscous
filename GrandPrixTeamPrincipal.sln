@@ -7,7 +7,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GrandPrix.Core", "src\GrandPrix.Core\GrandPrix.Core.csproj", "{AD9A57CF-3E6B-4419-AFE4-640D8547FCF0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GrandPrix.Console", "src\GrandPrix.Console\GrandPrix.Console.csproj", "{7D7DE926-38E0-4D42-BE53-7B279661A759}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GrandPrix.CLI", "src\GrandPrix.CLI\GrandPrix.CLI.csproj", "{7D7DE926-38E0-4D42-BE53-7B279661A759}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
