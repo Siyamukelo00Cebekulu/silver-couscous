@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\GrandPrix.Core\GrandPrix.Core.csproj" />
+    <ProjectReference Include="..\GrandPrix.Application\GrandPrix.Application.csproj" />
+    <ProjectReference Include="..\GrandPrix.Domain\GrandPrix.Domain.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

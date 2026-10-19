@@ -1,6 +1,7 @@
 ﻿using System;
-using GrandPrix.Core.Models;
-using GrandPrix.Core.Simulation;
+using GrandPrix.Domain.Calendar;
+using GrandPrix.Domain.Drivers;
+using GrandPrix.Domain.Race;
 
 var track = new Track
 {
