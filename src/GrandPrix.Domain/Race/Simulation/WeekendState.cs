@@ -23,7 +23,7 @@ namespace GrandPrix.Domain.Race
 
         public PracticeResult? PlayerPracticeResult { get; private set; }
         public List<QualifyingResult> QualifyingResults { get; private set; } = new();
-        public List<RaceResult> RaceResults { get; private set; } = new();
+        public List<DriverRaceResult> RaceResults { get; private set; } = new();
 
         private readonly int _seed;
 
@@ -72,12 +72,12 @@ namespace GrandPrix.Domain.Race
             return QualifyingResults;
         }
 
-        public List<RaceResult> RunRace(StrategyPlan playerPlan)
+        public List<DriverRaceResult> RunRace(StrategyPlan playerPlan)
         {
             RequirePhase(WeekendPhase.Race, "Race");
 
             var sim = new RaceSimulator(Track, _seed + 2);
-            var results = new List<RaceResult>();
+            var results = new List<DriverRaceResult>();
 
             foreach (var entry in Entries)
             {

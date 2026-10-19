@@ -1,4 +1,6 @@
 using System;
+using GrandPrix.Core.Abstractions;
+using GrandPrix.Core.Simulation;
 using GrandPrix.Domain.Calendar;
 using GrandPrix.Domain.Drivers;
 using GrandPrix.Domain.Race;
@@ -23,7 +25,7 @@ namespace GrandPrix.Domain.Race
 
     public class PracticeSimulator
     {
-        private readonly Random _rng;
+        private readonly IRandom _rng;
         private readonly Track _track;
         private readonly Weather _weather;
 
@@ -31,7 +33,7 @@ namespace GrandPrix.Domain.Race
         {
             _track = track;
             _weather = weather;
-            _rng = new Random(seed);
+            _rng = new SeededRandom(seed).Fork("practice");
         }
 
         public PracticeResult Run(Driver driver, PracticePlan plan)

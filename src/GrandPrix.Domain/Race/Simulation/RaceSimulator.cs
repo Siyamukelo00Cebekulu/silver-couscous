@@ -1,10 +1,12 @@
 using System.Collections.Generic;
+using GrandPrix.Core.Abstractions;
+using GrandPrix.Core.Simulation;
 using GrandPrix.Domain.Calendar;
 using GrandPrix.Domain.Drivers;
 
 namespace GrandPrix.Domain.Race;
 
-public class RaceResult
+public class DriverRaceResult
 {
     public string DriverName { get; set; } = "";
     public double TotalTime { get; set; }
@@ -19,10 +21,10 @@ public class RaceSimulator
     public RaceSimulator(Track track, int seed)
     {
         _track = track;
-        _lapCalc = new LapCalculator(seed);
+        _lapCalc = new LapCalculator(new SeededRandom(seed).Fork("race"));
     }
 
-    public RaceResult Simulate(Driver driver, StrategyPlan plan)
+    public DriverRaceResult Simulate(Driver driver, StrategyPlan plan)
     {
         var startingTyre = GetCompound(plan.StartingTyre);
         var pitTyre = GetCompound(plan.PitTyre);
@@ -52,7 +54,7 @@ public class RaceSimulator
             tyreWear += currentTyre.WearRate * _track.TyreWearFactor * wearMultiplier;
         }
 
-        return new RaceResult
+        return new DriverRaceResult
         {
             DriverName = driver.Name,
             TotalTime = totalTime,

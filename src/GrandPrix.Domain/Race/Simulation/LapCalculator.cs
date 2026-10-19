@@ -1,4 +1,6 @@
 using System;
+using GrandPrix.Core.Abstractions;
+using GrandPrix.Core.Simulation;
 using GrandPrix.Domain.Calendar;
 using GrandPrix.Domain.Drivers;
 using GrandPrix.Domain.Race;
@@ -7,9 +9,17 @@ namespace GrandPrix.Domain.Race;
 
 public class LapCalculator
 {
-    private readonly Random _rng;
+    private readonly IRandom _rng;
 
-    public LapCalculator(int seed) => _rng = new Random(seed);
+    public LapCalculator(int seed)
+        : this(new SeededRandom(seed).Fork("lap-times"))
+    {
+    }
+
+    public LapCalculator(IRandom random)
+    {
+        _rng = random ?? throw new ArgumentNullException(nameof(random));
+    }
 
     public double CalculateLapTime(
         Driver driver,
