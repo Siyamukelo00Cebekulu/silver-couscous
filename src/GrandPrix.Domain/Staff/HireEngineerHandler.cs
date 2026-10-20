@@ -53,7 +53,8 @@ public sealed class HireEngineerHandler : ICommandHandler<HireEngineerCommand>
             candidate.Id,
             candidate.Name,
             command.OfferedSalary,
-            command.ContractYears));
+            command.ContractYears,
+            candidate.Skill));
         return CommandResult.Ok(new IDomainEvent[]
         {
             new EngineerHiredEvent(_clock.Today, _team.Id, candidate.Id)

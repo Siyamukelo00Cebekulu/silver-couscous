@@ -3,6 +3,7 @@ using GrandPrix.Core.Common;
 using GrandPrix.Core.Simulation;
 using GrandPrix.Domain.Car;
 using GrandPrix.Domain.Race;
+using GrandPrix.Domain.Staff;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 var session = new GameSession();
@@ -12,6 +13,7 @@ var menuItems = new[]
     ("Season calendar", "calendar"),
     ("Team and facilities", "team"),
     ("Driver profiles", "drivers"),
+    ("Hire engineer", "staff"),
     ("Upgrade facilities", "facilities"),
     ("Car development", "development"),
     ("Team inbox", "inbox"),
@@ -39,6 +41,9 @@ while (running)
             break;
         case "drivers":
             PrintDrivers(session);
+            break;
+        case "staff":
+            ManageStaff(session);
             break;
         case "facilities":
             ManageFacilities(session);
@@ -179,7 +184,8 @@ static void PrintTeam(GameSession session)
     Console.WriteLine($"Total payroll: {GameSession.FormatMoney(session.PlayerTeam.MonthlyPayroll)} monthly");
     Console.WriteLine($"Engineers: {session.PlayerTeam.Engineers.Count}");
     foreach (var engineer in session.PlayerTeam.Engineers)
-        Console.WriteLine($"  {engineer.Name} | {GameSession.FormatMoney(engineer.MonthlySalary)}/month | {engineer.ContractYears}-year contract");
+        Console.WriteLine($"  {engineer.Name} | strategy skill {engineer.Skill} | " +
+                          $"{GameSession.FormatMoney(engineer.MonthlySalary)}/month | {engineer.ContractYears}-year contract");
     Console.WriteLine($"Facilities: wind tunnel L{session.Facilities.WindTunnelLevel}, simulator L{session.Facilities.SimulatorLevel}, factory L{session.Facilities.FactoryLevel}");
     Console.WriteLine($"Cost cap: {GameSession.FormatMoney(new Money(session.PlayerCarDesign.CostCapSpentCents))} / " +
                       $"{GameSession.FormatMoney(new Money(CarDesign.CostCapLimitCents))}");
@@ -197,6 +203,85 @@ static void PrintDrivers(GameSession session)
         Console.WriteLine($"  Wet skill {driver.WetSkill,2} | Experience {driver.Experience,2} | Feedback {driver.Feedback,2} | " +
                           $"Aggression {driver.Aggression,2} | Defending {driver.Defending,2}");
     }
+}
+
+static void ManageStaff(GameSession session)
+{
+    Console.WriteLine("\nENGINEER MARKET");
+    for (var index = 0; index < session.EngineerCandidates.Count; index++)
+    {
+        var candidate = session.EngineerCandidates[index];
+        var alreadyHired = session.PlayerTeam.Engineers.Any(engineer => engineer.Id == candidate.Id);
+        Console.WriteLine($"{index + 1}. {candidate.Name,-16} strategy skill {candidate.Skill,2} | " +
+                          $"{GameSession.FormatMoney(candidate.AskingAnnualSalary)}/year" +
+                          (alreadyHired ? " | HIRED" : string.Empty));
+    }
+    Console.WriteLine("Your engineers advise on pit windows and tyre calls during every race.");
+    Console.Write("Candidate number to hire (Enter to cancel)> ");
+    if (!int.TryParse(Console.ReadLine(), out var number) ||
+        number < 1 || number > session.EngineerCandidates.Count)
+        return;
+
+    var selected = session.EngineerCandidates[number - 1];
+    var result = session.Execute(new HireEngineerCommand(
+        session.PlayerTeam.Id,
+        selected.Id,
+        selected.AskingAnnualSalary,
+        3));
+    Console.WriteLine(result.Succeeded
+        ? $"Hired {selected.Name} for {GameSession.FormatMoney(selected.AskingAnnualSalary)}/year on a 3-year contract."
+        : $"Hire rejected: {result.Error}");
+}
+
+static PracticeFocus ChoosePracticeFocus()
+{
+    if (Console.IsInputRedirected)
+        return PracticeFocus.Setup;
+    Console.WriteLine("\nChoose practice focus: 1 Setup, 2 Tyre evaluation, 3 Race simulation.");
+    Console.Write("practice focus> ");
+    return Console.ReadLine()?.Trim() switch
+    {
+        "2" => PracticeFocus.TyreEvaluation,
+        "3" => PracticeFocus.RaceSimulation,
+        _ => PracticeFocus.Setup
+    };
+}
+
+static TyreCompoundType ChooseQualifyingTyre()
+{
+    if (Console.IsInputRedirected)
+        return TyreCompoundType.Soft;
+    Console.WriteLine("\nQualifying tyre: 1 Soft (fastest), 2 Medium (balanced), 3 Hard (durable).");
+    Console.Write("qualifying tyre> ");
+    return Console.ReadLine()?.Trim() switch
+    {
+        "2" => TyreCompoundType.Medium,
+        "3" => TyreCompoundType.Hard,
+        _ => TyreCompoundType.Soft
+    };
+}
+
+static QualiRisk ChooseQualifyingRisk()
+{
+    if (Console.IsInputRedirected)
+        return QualiRisk.Normal;
+    Console.WriteLine("Qualifying risk: 1 Safe, 2 Normal, 3 Push.");
+    Console.Write("qualifying risk> ");
+    return Console.ReadLine()?.Trim() switch
+    {
+        "1" => QualiRisk.Safe,
+        "3" => QualiRisk.Push,
+        _ => QualiRisk.Normal
+    };
+}
+
+static int ChooseQualifyingRuns()
+{
+    if (Console.IsInputRedirected)
+        return 2;
+    Console.WriteLine("Qualifying runs: 1–5 (more runs give extra attempts but cost more time).");
+    Console.Write("runs> ");
+    return int.TryParse(Console.ReadLine(), out var runs) ? Math.Clamp(runs, 1, 5) : 2;
 }
 
 static void ManageFacilities(GameSession session)
@@ -290,15 +375,21 @@ static void RunWeekend(GameSession session)
     Console.WriteLine($"\nRACE WEEKEND: {circuit.Name} | {circuit.Country} | {circuit.RaceLaps} laps");
     if (!weekend.PracticeComplete)
     {
-        Console.WriteLine("\nPRACTICE");
-        foreach (var result in session.RunPractice(2026 + session.Calendar.Count(item => item.Completed)))
+        var focus = ChoosePracticeFocus();
+        Console.WriteLine($"\nPRACTICE — selected focus: {focus}");
+        foreach (var result in session.RunPractice(
+                     2026 + session.Calendar.Count(item => item.Completed), focus))
             Console.WriteLine($"{result.DriverName,-18} best {result.BestLapSeconds,7:F3}s | long run {result.LongRunLapSeconds,7:F3}s | " +
                               $"wear {result.TyreWearPerLap:P1} | {result.EngineerNote}");
     }
     if (!weekend.QualifyingComplete)
     {
-        Console.WriteLine("\nQUALIFYING");
-        foreach (var result in session.RunQualifying(90210 + session.Calendar.Count(item => item.Completed)))
+        var tyre = ChooseQualifyingTyre();
+        var risk = ChooseQualifyingRisk();
+        var runs = ChooseQualifyingRuns();
+        Console.WriteLine($"\nQUALIFYING — {tyre} tyres | {risk} risk | {runs} run(s)");
+        foreach (var result in session.RunQualifying(
+                     90210 + session.Calendar.Count(item => item.Completed), tyre, risk, runs))
             Console.WriteLine($"P{result.GridPosition,2} #{result.CarNumber,-2} {result.DriverName,-18} {result.LapTimeSeconds:F3}s");
     }
     if (weekend.RaceComplete)
@@ -307,7 +398,8 @@ static void RunWeekend(GameSession session)
         return;
     }
 
-    Console.WriteLine("\nGRAND PRIX — live timing begins shortly. Space pauses/resumes; Q skips to the finish.");
+    Console.WriteLine("\nGRAND PRIX — live timing begins shortly. Space pauses; Q fast-forwards.");
+    Console.WriteLine("Arrows/1/2 select your car | A accepts strategy call | T selects pit tyre | P boxes | M changes pace.");
     if (!Console.IsInputRedirected)
         Thread.Sleep(700);
     var setup = session.CreateRaceSetup(circuit.RaceLaps, 42 + session.Calendar.Count(item => item.Completed));
@@ -318,7 +410,10 @@ static void RunWeekend(GameSession session)
     var eventFeed = new List<string>();
     var paused = false;
     var fastForward = false;
-    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, paused);
+    var selectedCarNumber = 11;
+    RaceTyreCompound? selectedPitTyre = null;
+    var advice = GetPlayerAdvice(session, snapshot);
+    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
     while (!engine.IsFinished)
     {
         if (!Console.IsInputRedirected)
@@ -329,12 +424,48 @@ static void RunWeekend(GameSession session)
                 if (key == ConsoleKey.Spacebar)
                 {
                     paused = !paused;
-                    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, paused);
+                    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
                 }
                 else if (key == ConsoleKey.Q)
                 {
                     fastForward = true;
                     paused = false;
+                }
+                else if (key is ConsoleKey.UpArrow or ConsoleKey.LeftArrow or ConsoleKey.D1)
+                {
+                    selectedCarNumber = 11;
+                }
+                else if (key is ConsoleKey.DownArrow or ConsoleKey.RightArrow or ConsoleKey.D2)
+                {
+                    selectedCarNumber = 12;
+                }
+                else if (key == ConsoleKey.T)
+                {
+                    selectedPitTyre = NextPitTyre(selectedPitTyre);
+                    eventFeed.Add($"Pit menu: selected {selectedPitTyre} for car #{selectedCarNumber}.");
+                }
+                else if (key == ConsoleKey.P)
+                {
+                    QueuePit(engine, snapshot, selectedCarNumber,
+                        selectedPitTyre ?? advice[selectedCarNumber].SuggestedTyre, eventFeed);
+                }
+                else if (key == ConsoleKey.A)
+                {
+                    var call = advice[selectedCarNumber];
+                    if (call.RecommendPit)
+                        QueuePit(engine, snapshot, selectedCarNumber, call.SuggestedTyre, eventFeed);
+                    else
+                        eventFeed.Add($"Strategy: keep car #{selectedCarNumber} out; no stop is recommended yet.");
+                }
+                else if (key == ConsoleKey.M)
+                {
+                    var car = snapshot.Cars.FirstOrDefault(item => item.CarNumber == selectedCarNumber);
+                    if (car is not null)
+                    {
+                        var mode = NextDriverMode(car.Mode);
+                        engine.Submit(new SetDriverModeCommand(car.CarId, mode));
+                        eventFeed.Add($"Pit wall: car #{selectedCarNumber} instructed to {mode}.");
+                    }
                 }
             }
             while (paused && !fastForward)
@@ -346,20 +477,24 @@ static void RunWeekend(GameSession session)
                 if (key == ConsoleKey.Spacebar)
                 {
                     paused = false;
-                    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, paused);
+                    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
                 }
                 else if (key == ConsoleKey.Q)
                 {
                     fastForward = true;
                     paused = false;
                 }
+                else if (key is ConsoleKey.UpArrow or ConsoleKey.LeftArrow or ConsoleKey.D1)
+                    selectedCarNumber = 11;
+                else if (key is ConsoleKey.DownArrow or ConsoleKey.RightArrow or ConsoleKey.D2)
+                    selectedCarNumber = 12;
             }
             if (!fastForward)
-                Thread.Sleep(450);
+                Thread.Sleep(1200);
         }
         else
         {
-            Thread.Sleep(80);
+            Thread.Sleep(1200);
         }
 
         var events = engine.AdvanceOneLap();
@@ -368,7 +503,8 @@ static void RunWeekend(GameSession session)
         if (eventFeed.Count > 5)
             eventFeed.RemoveRange(0, eventFeed.Count - 5);
         snapshot = engine.GetSnapshot();
-        DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, paused);
+        advice = GetPlayerAdvice(session, snapshot);
+        DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
         oldPositions = snapshot.Cars.ToDictionary(car => car.CarId, car => car.Position);
     }
     var payouts = session.SettleRace(setup, engine.GetResult());
@@ -396,18 +532,64 @@ static void PrintStandings(RaceSnapshot snapshot, IReadOnlyDictionary<EntityId, 
     }
 }
 
+static Dictionary<int, RaceStrategyAdvice> GetPlayerAdvice(GameSession session, RaceSnapshot snapshot) =>
+    new[]
+    {
+        session.GetTyreAdvice(snapshot, 11),
+        session.GetTyreAdvice(snapshot, 12)
+    }.Select((advice, index) => (Advice: advice, CarNumber: index + 11))
+        .ToDictionary(item => item.CarNumber, item => item.Advice);
+
+static RaceTyreCompound NextPitTyre(RaceTyreCompound? current) => current switch
+{
+    null => RaceTyreCompound.Soft,
+    RaceTyreCompound.Soft => RaceTyreCompound.Medium,
+    RaceTyreCompound.Medium => RaceTyreCompound.Hard,
+    _ => RaceTyreCompound.Soft
+};
+
+static DriverMode NextDriverMode(DriverMode current) => current switch
+{
+    DriverMode.Standard => DriverMode.Push,
+    DriverMode.Push => DriverMode.SaveTyres,
+    DriverMode.SaveTyres => DriverMode.SaveFuel,
+    _ => DriverMode.Standard
+};
+
+static void QueuePit(
+    LapRaceEngine engine,
+    RaceSnapshot snapshot,
+    int carNumber,
+    RaceTyreCompound tyre,
+    ICollection<string> eventFeed)
+{
+    var car = snapshot.Cars.FirstOrDefault(item => item.CarNumber == carNumber && item.TeamName == "Apex GP");
+    if (car is null || car.Retired)
+    {
+        eventFeed.Add($"Pit wall: car #{carNumber} is not available for a pit instruction.");
+        return;
+    }
+    engine.Submit(new BoxThisLapCommand(car.CarId, tyre, 0));
+    eventFeed.Add($"Pit wall: car #{carNumber} will box this lap for {tyre} tyres.");
+}
+
 static void DrawRaceFrame(
     string circuitName,
     RaceSnapshot snapshot,
     IReadOnlyDictionary<EntityId, int> previousPositions,
     IReadOnlyList<string> eventFeed,
-    bool paused)
+    IReadOnlyDictionary<int, RaceStrategyAdvice> advice,
+    bool paused,
+    int selectedCarNumber,
+    RaceTyreCompound? selectedPitTyre)
 {
     if (!Console.IsOutputRedirected)
         Console.Clear();
     Console.WriteLine($"LIVE GRAND PRIX  |  {circuitName}");
     Console.WriteLine($"Lap {snapshot.CurrentLap}  |  Race clock {snapshot.RaceTime:mm\\:ss}  |  " +
-                      $"{(paused ? "PAUSED — press Space to resume" : "Space: pause  Q: fast-forward")}");
+                      $"{(paused ? "PAUSED — Space resumes" : "Space: pause  Q: fast-forward")}");
+    Console.WriteLine($"Selected car #{selectedCarNumber} | Pit tyre: {selectedPitTyre?.ToString() ?? "staff recommendation"} | " +
+                      "Arrows/1/2 select  A advice  T tyre  P pit  M pace");
     Console.WriteLine("Pos  Move  No  Driver             Team                  Tyre       Wear   Gap");
     foreach (var car in snapshot.Cars)
     {
@@ -423,6 +605,9 @@ static void DrawRaceFrame(
     else
         foreach (var message in eventFeed)
             Console.WriteLine($"• {message}");
+    Console.WriteLine("\nSTRATEGY RADIO");
+    foreach (var carNumber in new[] { 11, 12 })
+        Console.WriteLine($"{(carNumber == selectedCarNumber ? "> " : "  ")}#{carNumber}: {advice[carNumber].Message}");
 }
 
 static void AdvanceToNextEvent(GameSession session)
@@ -440,6 +625,8 @@ static void AdvanceToNextEvent(GameSession session)
 
 static void PrintHelp()
 {
-    Console.WriteLine("Use the numbered menu or these commands: status, calendar, team, drivers, facilities, development, inbox, weekend, advance, help, exit.");
-    Console.WriteLine("A weekend automatically runs practice, qualifying, and every race lap. Development projects progress through wind tunnel, design, and build.");
+    Console.WriteLine("Use arrows/W/S and Enter to navigate; the menu includes staff hiring and race management.");
+    Console.WriteLine("Practice: choose setup, tyre evaluation, or race simulation. Qualifying: choose tyre, risk, and runs.");
+    Console.WriteLine("Race: arrows or 1/2 select your car; A accepts a staff tyre call, T chooses a tyre, P boxes, M changes pace.");
+    Console.WriteLine("Races display each lap for about 1.2 seconds. Space pauses/resumes; Q fast-forwards.");
 }

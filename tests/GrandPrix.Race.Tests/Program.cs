@@ -24,6 +24,8 @@ var checks = new (string Name, Action Run)[]
     ("monthly payroll timing", Checks.PayrollRunsAtMonthBoundary),
     ("race payout updates team cash and championship points", Checks.RacePrizeSettlement),
     ("five-circuit calendar and weekend session ordering", Checks.CalendarAndWeekendSessions),
+    ("practice and qualifying strategy choices affect session results", Checks.SessionStrategyChoices),
+    ("hired engineer joins team and provides race strategy advice", Checks.HiredEngineerAdvisesTyres),
     ("staged development and facility budget management", Checks.DevelopmentAndFacilities),
     ("legacy race simulator repeatability", Checks.LegacySimulatorIsRepeatable)
 };
@@ -255,6 +257,48 @@ internal static class Checks
         Check(setup.Grid.Select(car => gridPositions[car.CarNumber])
                 .SequenceEqual(Enumerable.Range(1, 10)),
             "Qualifying order was not carried over to the race grid.");
+    }
+
+    public static void SessionStrategyChoices()
+    {
+        static (PracticeFocus Focus, double Setup, double RaceBonus, double QualiTime) Run(
+            PracticeFocus focus, TyreCompoundType tyre, QualiRisk risk, int runs)
+        {
+            var session = new GameSession();
+            session.RunPractice(119, focus);
+            var result = session.RunQualifying(441, tyre, risk, runs)
+                .Single(item => item.DriverName == "Lena Hart");
+            return (session.Weekend.PracticeFocus, session.Weekend.SetupConfidence,
+                session.Weekend.RacePaceBonus, result.LapTimeSeconds);
+        }
+
+        var setupPlan = Run(PracticeFocus.Setup, TyreCompoundType.Soft, QualiRisk.Push, 3);
+        var tyrePlan = Run(PracticeFocus.TyreEvaluation, TyreCompoundType.Hard, QualiRisk.Safe, 1);
+        Check(setupPlan.Focus == PracticeFocus.Setup && tyrePlan.Focus == PracticeFocus.TyreEvaluation,
+            "The selected practice focus was not retained.");
+        Check(setupPlan.Setup > tyrePlan.Setup, "Setup practice did not improve setup confidence.");
+        Check(setupPlan.RaceBonus != tyrePlan.RaceBonus, "Practice strategy did not affect race pace setup.");
+        Check(setupPlan.QualiTime < tyrePlan.QualiTime,
+            "Soft tyres, push risk, and additional runs did not improve qualifying pace.");
+    }
+
+    public static void HiredEngineerAdvisesTyres()
+    {
+        var session = new GameSession();
+        var candidate = session.EngineerCandidates[0];
+        var hired = session.Execute(new HireEngineerCommand(
+            session.PlayerTeam.Id, candidate.Id, candidate.AskingAnnualSalary, 3));
+        Check(hired.Succeeded, hired.Error ?? "Engineer hire failed.");
+        Check(session.PlayerTeam.Engineers.Single().Skill == candidate.Skill,
+            "The hired engineer's strategy skill was not retained.");
+        var setup = session.CreateRaceSetup(5, 123);
+        var engine = new LapRaceEngine();
+        engine.Start(setup, new SeededRandom(123));
+        var advice = session.GetTyreAdvice(engine.GetSnapshot(), 11);
+        Check(advice.Message.Contains(candidate.Name, StringComparison.Ordinal),
+            "Race strategy advice did not come from the hired engineer.");
+        Check(advice.Message.Contains("Lena Hart", StringComparison.Ordinal),
+            "Driver tyre feedback was missing from the engineer's recommendation.");
     }
 
     public static void DevelopmentAndFacilities()

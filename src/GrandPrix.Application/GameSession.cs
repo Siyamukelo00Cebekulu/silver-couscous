@@ -169,7 +169,9 @@ public sealed class GameSession : IGameSession
                     Aggression = driver.Aggression,
                     Defending = driver.Defending,
                     CarPaceFactor = TeamPaceFactor(teamIndex) +
-                        (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0) + driverIndex * 0.003,
+                        (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 -
+                            (Weekend.PracticeComplete ? Weekend.RacePaceBonus : 0) : 0) +
+                        driverIndex * 0.003,
                     StartingTyre = RaceTyreCompound.Medium,
                     FuelLoadKg = 110,
                     IsAi = team != PlayerTeam,
@@ -207,10 +209,22 @@ public sealed class GameSession : IGameSession
         return Weekend;
     }
 
-    public IReadOnlyList<PracticeResult> RunPractice(int seed)
+    public IReadOnlyList<PracticeResult> RunPractice(int seed) =>
+        RunPractice(seed, PracticeFocus.Setup);
+
+    public IReadOnlyList<PracticeResult> RunPractice(int seed, PracticeFocus focus)
     {
+        if (!Enum.IsDefined(typeof(PracticeFocus), focus))
+            throw new ArgumentOutOfRangeException(nameof(focus));
         var circuit = NextEvent.Circuit;
         var random = new SeededRandom(seed);
+        Weekend.PracticeFocus = focus;
+        Weekend.SetupConfidence = focus == PracticeFocus.Setup
+            ? Math.Min(100, 45 + Facilities.PracticeBonus + PlayerTeam.Engineers.Select(engineer => engineer.Skill).DefaultIfEmpty(0).Max() * 0.15)
+            : focus == PracticeFocus.RaceSimulation ? 48 + Facilities.PracticeBonus : 42 + Facilities.PracticeBonus;
+        Weekend.RacePaceBonus = focus == PracticeFocus.RaceSimulation
+            ? 0.002 + Facilities.PracticeBonus / 10000.0
+            : focus == PracticeFocus.Setup ? 0.001 + Weekend.SetupConfidence / 20000.0 : 0;
         var results = Drivers.Select(driver =>
         {
             var team = GetTeamForDriver(driver);
@@ -221,12 +235,20 @@ public sealed class GameSession : IGameSession
             return new PracticeResult
             {
                 DriverName = driver.Name,
-                BestLapSeconds = baseLap - setupQuality + random.NextGaussian(0, 0.22),
+                BestLapSeconds = baseLap - setupQuality +
+                    (focus == PracticeFocus.Setup ? -0.12 : focus == PracticeFocus.TyreEvaluation ? 0.08 : 0) +
+                    random.NextGaussian(0, 0.22),
                 LongRunLapSeconds = baseLap * (1 + circuit.TyreWearFactor * 0.035) + random.NextGaussian(0, 0.3),
-                TyreWearPerLap = circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0),
-                EngineerNote = driver.Feedback >= 85
-                    ? "Clear setup feedback; strong direction for qualifying."
-                    : "More running recommended to refine balance."
+                TyreWearPerLap = circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0) *
+                    (focus == PracticeFocus.TyreEvaluation ? 0.92 : 1),
+                EngineerNote = focus switch
+                {
+                    PracticeFocus.Setup => $"Setup confidence {Weekend.SetupConfidence:F0}%; {driver.Name} reports a predictable balance.",
+                    PracticeFocus.TyreEvaluation => $"Tyre data recommends a conservative stint; estimated wear {circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0) * 0.92:P1}/lap.",
+                    _ => driver.Feedback >= 85
+                        ? "Long-run simulation complete; race pace feedback is strong."
+                        : "Long-run simulation complete; consider preserving tyres."
+                }
             };
         }).OrderBy(result => result.BestLapSeconds).ToArray();
         Weekend.PracticeResults = results;
@@ -235,19 +257,56 @@ public sealed class GameSession : IGameSession
         return results;
     }
 
-    public IReadOnlyList<QualifyingResult> RunQualifying(int seed)
+    public IReadOnlyList<QualifyingResult> RunQualifying(int seed) =>
+        RunQualifying(seed, TyreCompoundType.Soft, QualiRisk.Normal, 2);
+
+    public IReadOnlyList<QualifyingResult> RunQualifying(
+        int seed,
+        TyreCompoundType tyre,
+        QualiRisk risk,
+        int runs)
     {
         if (!Weekend.PracticeComplete)
             throw new InvalidOperationException("Complete practice before qualifying.");
+        if (!Enum.IsDefined(typeof(TyreCompoundType), tyre))
+            throw new ArgumentOutOfRangeException(nameof(tyre));
+        if (!Enum.IsDefined(typeof(QualiRisk), risk))
+            throw new ArgumentOutOfRangeException(nameof(risk));
+        if (runs < 1 || runs > 5)
+            throw new ArgumentOutOfRangeException(nameof(runs), "Qualifying runs must be between 1 and 5.");
         var circuit = NextEvent.Circuit;
+        Weekend.QualifyingTyre = tyre;
+        Weekend.QualifyingRisk = risk;
+        Weekend.QualifyingRuns = runs;
         var random = new SeededRandom(seed);
         var results = Drivers.Select(driver =>
         {
             var team = GetTeamForDriver(driver);
+            var playerDriver = team == PlayerTeam;
+            var tyreFactor = playerDriver ? tyre switch
+            {
+                TyreCompoundType.Soft => 0.974,
+                TyreCompoundType.Medium => 0.992,
+                TyreCompoundType.Hard => 1.012,
+                TyreCompoundType.Intermediate => 1.02,
+                TyreCompoundType.Wet => 1.035,
+                _ => 1
+            } : 0.974;
+            var riskFactor = playerDriver ? risk switch
+            {
+                QualiRisk.Push => 0.991,
+                QualiRisk.Safe => 1.006,
+                _ => 1
+            } : 1;
+            var runBonus = playerDriver ? (runs - 1) * 0.0012 : 0;
             var lapTime = circuit.BaseLapTimeSeconds *
                 (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
                 (1 - driver.Pace / 10000.0) - driver.Focus / 10000.0 +
-                random.NextGaussian(0, (101 - driver.Consistency) * 0.006);
+                random.NextGaussian(0, (101 - driver.Consistency) *
+                    (playerDriver && risk == QualiRisk.Push ? 0.009 : 0.006));
+            lapTime *= tyreFactor * riskFactor * (1 - runBonus);
+            if (playerDriver)
+                lapTime *= 1 - Weekend.SetupConfidence / 10000.0;
             return new { Driver = driver, Time = lapTime };
         }).OrderBy(item => item.Time).ToArray();
         Weekend.QualifyingResults = results.Select((item, index) => new QualifyingResult
@@ -260,6 +319,44 @@ public sealed class GameSession : IGameSession
         Weekend.QualifyingComplete = true;
         _inbox.Add($"{Today:yyyy-MM-dd}: Qualifying complete at {circuit.Name}; grid positions are confirmed.");
         return Weekend.QualifyingResults;
+    }
+
+    public RaceStrategyAdvice GetTyreAdvice(RaceSnapshot snapshot, int carNumber)
+    {
+        if (snapshot is null)
+            throw new ArgumentNullException(nameof(snapshot));
+        var car = snapshot.Cars.FirstOrDefault(item => item.CarNumber == carNumber);
+        if (car is null || car.TeamId != PlayerTeam.Id)
+            throw new ArgumentException("Tyre advice is available for your team's cars only.", nameof(carNumber));
+        var driver = Drivers.First(item => item.Name == car.DriverName);
+        var measuredWearRate = Weekend.PracticeFocus == PracticeFocus.TyreEvaluation
+            ? Weekend.PracticeResults.FirstOrDefault(item => item.DriverName == driver.Name)?.TyreWearPerLap
+            : null;
+        var wearRate = measuredWearRate ??
+            NextEvent.Circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0);
+        var lapsRemaining = Math.Max(0, NextEvent.Circuit.RaceLaps - car.LapsCompleted);
+        var predictedLife = (1 - car.TyreWear) / Math.Max(0.01, wearRate * 0.09);
+        var engineer = PlayerTeam.Engineers.OrderByDescending(item => item.Skill).FirstOrDefault();
+        var staffName = engineer?.Name ?? "Race engineer";
+        var confidence = engineer?.Skill ?? 62;
+        var pitWearThreshold = 0.70 - confidence / 1000.0;
+        var recommendPit = car.TyreWear >= pitWearThreshold ||
+            (lapsRemaining > 2 && predictedLife < Math.Min(5, lapsRemaining));
+        var suggestedTyre = lapsRemaining > 6 ? RaceTyreCompound.Hard : RaceTyreCompound.Soft;
+        if (suggestedTyre == car.Tyre)
+            suggestedTyre = RaceTyreCompound.Medium;
+        var driverAdvice = car.TyreWear >= pitWearThreshold
+            ? $"{driver.Name}: tyres are fading; box soon."
+            : $"{driver.Name}: tyre grip is holding for now.";
+        var staffAdvice = recommendPit
+            ? $"{staffName} ({confidence}): box for {suggestedTyre}; estimated life is running short."
+            : $"{staffName} ({confidence}): stay out; estimated tyre life is adequate.";
+        return new RaceStrategyAdvice
+        {
+            Message = $"{staffAdvice} {driverAdvice}",
+            SuggestedTyre = suggestedTyre,
+            RecommendPit = recommendPit
+        };
     }
 
     public DevelopmentStageResult StartDevelopment(DevelopmentFocus focus, Money budget)

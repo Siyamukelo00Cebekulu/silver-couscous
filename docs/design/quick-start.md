@@ -12,12 +12,25 @@ In an interactive terminal, navigate the on-screen menu with the Up/Down arrow
 keys (or W/S), then press Enter. Number keys are shortcuts and Escape exits.
 When standard input is redirected, the CLI accepts a menu number or command
 name on a line (`status`, `calendar`, `team`, `drivers`, `facilities`,
-`development`, `inbox`, `weekend`, `advance`, `help`, or `exit`).
+`staff`, `development`, `inbox`, `weekend`, `advance`, `help`, or `exit`).
 
 Race weekends automatically run practice, qualifying, and the full race; there
-is no `next` command required. The race screen refreshes live after each lap,
-showing standings, gaps, tyre wear, position-change markers, and recent track
-radio events. Press Space to pause/resume or Q to fast-forward to the finish.
+is no `next` command required. Before sessions, choose a practice focus
+(setup, tyre evaluation, or race simulation), qualifying tyre, risk level, and
+number of runs. Those decisions affect setup confidence, race pace, and grid
+times.
+
+The race screen refreshes live after each lap, taking about 1.2 seconds per lap
+so the live timing and staff feedback can be followed. It shows standings, gaps,
+tyre wear, position changes, track events, and staff/driver tyre advice. Use the
+arrow keys to select car #11 or #12; press **A** to accept a recommended pit
+call, **T** to select a tyre and **P** to pit, or **M** to cycle the driver's
+pace mode. Press Space to pause/resume or Q to fast-forward.
+
+Use **Hire engineer** to recruit from the staff market. Engineers have a
+strategy skill, require a signing payment, and add salary to monthly payroll.
+Your best engineer supplies the staff side of race tyre recommendations; driver
+feedback is included alongside it.
 
 The 2026 calendar contains five fictional race venues. `advance` moves the date
 to the next event and processes monthly payroll on the first day of each month.

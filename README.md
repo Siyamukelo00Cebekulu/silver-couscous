@@ -25,6 +25,13 @@ through the calendar; payroll is charged on the first day of each month.
   Grand Prix. Standings show ▲ for gained positions, ▼ for lost positions, and
   — when unchanged. Race timing, tyre wear, weather effects, and per-car
   randomness are seedable.
+- **Race management:** race timing updates each lap at a readable pace, with
+  live engineer/driver tyre calls. Select a car, accept a pit recommendation,
+  choose a tyre, pit, or change driver pace from the keyboard.
+- **Session strategy:** choose practice focus, qualifying tyre compound, risk,
+  and number of runs. These choices affect setup, race pace, and grid position.
+- **Engineer hiring:** recruit strategy engineers from the staff market; their
+  skill informs race calls and their salary is part of team payroll.
 - **Five circuits:** Caspian Park, Silverstone, Monza, Suzuka, and Marina Bay.
   Track length, tyre wear, pit loss, and overtaking difficulty vary by venue.
 - **Driver profiles:** pace, consistency, tyre management, racecraft, focus,
@@ -49,7 +56,10 @@ line.
 
 During a race, the live timing screen refreshes after each simulated lap with
 standings, gaps, tyre wear, position-change indicators, and recent track radio
-events. Press **Space** to pause/resume or **Q** to fast-forward to the finish.
+events. Each lap takes about 1.2 seconds. Use arrow keys to select car #11 or
+#12, **A** to accept a staff pit call, **T** to choose a tyre, **P** to pit,
+and **M** to cycle pace modes. Press **Space** to pause/resume or **Q** to
+fast-forward to the finish.
 
 ## Menu and commands
 
@@ -59,12 +69,13 @@ events. Press **Space** to pause/resume or **Q** to fast-forward to the finish.
 | 2 Calendar | `calendar` | View scheduled races and completed rounds |
 | 3 Team | `team` | Team finances, engineers, facilities, and cost cap |
 | 4 Drivers | `drivers` | Driver attribute profiles |
-| 5 Facilities | `facilities` | Upgrade wind tunnel, simulator, or factory |
-| 6 Car development | `development` | Start or advance a development project |
-| 7 Inbox | `inbox` | Read staff and race-weekend messages |
-| 8 Race weekend | `weekend` | Run practice, qualifying, and the automatic race |
-| 9 Advance to event | `advance` | Advance the in-game date to the next race |
-| 0 Exit | `exit` | Quit |
+| 5 Hire engineer | `staff` | Recruit a strategy engineer from the market |
+| 6 Facilities | `facilities` | Upgrade wind tunnel, simulator, or factory |
+| 7 Car development | `development` | Start or advance a development project |
+| 8 Inbox | `inbox` | Read staff and race-weekend messages |
+| 9 Race weekend | `weekend` | Set session strategies and run the race |
+| 10 Advance to event | `advance` | Advance the in-game date to the next race |
+| 11 Exit | `exit` | Quit |
 
 Development asks for a focus (`aero`, `chassis`, or `reliability`) and a budget
 of at least $100,000. Re-enter **Car development** and confirm each work step
