@@ -15,4 +15,5 @@ jobs:
       - run: dotnet restore GrandPrixTeamPrincipal.sln
       - run: dotnet build GrandPrixTeamPrincipal.sln --configuration Release --no-restore
       - run: dotnet test GrandPrixTeamPrincipal.sln --configuration Release --no-build
+      - run: dotnet run --project tests/GrandPrix.Race.Tests/GrandPrix.Race.Tests.csproj --configuration Release
       - run: dotnet run --project tools/ContentValidator/ContentValidator.csproj --configuration Release -- content

@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="..\GrandPrix.CLI\Program.cs" Link="Program.cs" />
+    <Compile Include="..\GrandPrix.CLI\Input\CommandParser.cs" Link="Input\CommandParser.cs" />
     <ProjectReference Include="..\GrandPrix.Application\GrandPrix.Application.csproj" />
     <ProjectReference Include="..\GrandPrix.Domain\GrandPrix.Domain.csproj" />
   </ItemGroup>

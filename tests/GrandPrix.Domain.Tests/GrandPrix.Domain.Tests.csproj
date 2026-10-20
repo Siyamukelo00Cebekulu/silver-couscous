@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <ProjectReference Include="..\..\src\GrandPrix.Application\GrandPrix.Application.csproj" />
     <ProjectReference Include="..\..\src\GrandPrix.Domain\GrandPrix.Domain.csproj" />
   </ItemGroup>
 

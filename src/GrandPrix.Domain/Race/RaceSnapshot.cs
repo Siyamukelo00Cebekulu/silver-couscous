@@ -16,7 +16,12 @@ public sealed class RaceSnapshot
 public sealed class CarState
 {
     public EntityId CarId { get; set; }
+    public EntityId TeamId { get; set; }
+    public string TeamName { get; set; } = string.Empty;
+    public string DriverName { get; set; } = string.Empty;
+    public int CarNumber { get; set; }
     public int Position { get; set; }
+    public int LapsCompleted { get; set; }
     public double TrackProgress { get; set; }
     public double GapToLeaderSec { get; set; }
     public double GapToAheadSec { get; set; }
@@ -26,4 +31,6 @@ public sealed class CarState
     public DriverMode Mode { get; set; }
     public bool InPit { get; set; }
     public bool Retired { get; set; }
+    public double LastLapTimeSec { get; set; }
+    public double TotalTimeSec { get; set; }
 }
