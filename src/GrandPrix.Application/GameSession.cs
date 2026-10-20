@@ -9,7 +9,9 @@ using GrandPrix.Core.Common;
 using GrandPrix.Core.Events;
 using GrandPrix.Core.Simulation;
 using GrandPrix.Domain.Calendar;
+using GrandPrix.Domain.Car;
 using GrandPrix.Domain.Drivers;
+using GrandPrix.Domain.Facilities;
 using GrandPrix.Domain.Race;
 using GrandPrix.Domain.Staff;
 using GrandPrix.Domain.Team;
@@ -32,6 +34,9 @@ public sealed class GameSession : IGameSession
     private readonly List<Driver> _drivers = new();
     private readonly Dictionary<EntityId, Team> _teamsById = new();
     private readonly IReadOnlyList<EngineerCandidate> _engineerCandidates;
+    private readonly List<CalendarRaceEvent> _calendar;
+    private readonly Dictionary<Team, CarDesign> _carDesigns = new();
+    private DevelopmentProject? _developmentProject;
 
     public GameSession()
     {
@@ -51,6 +56,20 @@ public sealed class GameSession : IGameSession
         };
         foreach (var team in Teams)
             _teamsById.Add(team.Id, team);
+        foreach (var team in Teams)
+            _carDesigns.Add(team, new CarDesign());
+        Facilities = new TeamFacilities();
+        Circuits = new[]
+        {
+            new RaceCircuit("caspian-park", "Caspian Park Grand Prix", "Azerbaijan", 16, 96.4, 1.05, 19.5, 0.8, "Fast street circuit"),
+            new RaceCircuit("silverstone", "Silverstone Grand Prix", "United Kingdom", 18, 91.8, 1.12, 21, 0.7, "High-speed and aerodynamic"),
+            new RaceCircuit("monza", "Monza Grand Prix", "Italy", 18, 84.2, 0.92, 18, 0.55, "Low-drag power circuit"),
+            new RaceCircuit("suzuka", "Suzuka Grand Prix", "Japan", 17, 94.6, 1.18, 22, 0.9, "Technical, high commitment"),
+            new RaceCircuit("marina-bay", "Marina Bay Grand Prix", "Singapore", 15, 103.2, 1.28, 24, 1.15, "Hot, demanding street circuit")
+        };
+        _calendar = Circuits.Select((circuit, index) =>
+            new CalendarRaceEvent(_clock.Today.AddDays(35 + index * 35), circuit)).ToList();
+        Weekend = new RaceWeekend(NextEvent.Circuit.Name);
 
         Drivers = CreateDrivers();
         _drivers.AddRange(Drivers);
@@ -67,6 +86,8 @@ public sealed class GameSession : IGameSession
         _eventBus.Subscribe<EngineerHiredEvent>(evt =>
             _inbox.Add($"{evt.OccurredOn:yyyy-MM-dd}: {GetEngineerName(evt.EngineerId)} joined {PlayerTeam.Name}."));
         _clock.DayAdvanced += OnDayAdvanced;
+        _inbox.Add("Chief engineer: Start with a wind-tunnel study to identify a legal aerodynamic gain.");
+        _inbox.Add("Race strategist: Five rounds are scheduled. Check the calendar and complete practice before qualifying.");
     }
 
     public Team PlayerTeam { get; }
@@ -75,6 +96,14 @@ public sealed class GameSession : IGameSession
     public IReadOnlyList<EngineerCandidate> EngineerCandidates => _engineerCandidates;
     public DateTime Today => _clock.Today;
     public IReadOnlyList<string> Inbox => _inbox;
+    public IReadOnlyList<RaceCircuit> Circuits { get; }
+    public IReadOnlyList<CalendarRaceEvent> Calendar => _calendar;
+    public CalendarRaceEvent NextEvent => _calendar.FirstOrDefault(item => !item.Completed) ??
+        new CalendarRaceEvent(Today.AddDays(35), Circuits[0]);
+    public RaceWeekend Weekend { get; private set; }
+    public TeamFacilities Facilities { get; }
+    public CarDesign PlayerCarDesign => _carDesigns[PlayerTeam];
+    public DevelopmentProject? CurrentDevelopment => _developmentProject;
 
     public CommandResult Execute(ICommand command) => _commandBus.Dispatch(command);
 
@@ -97,7 +126,7 @@ public sealed class GameSession : IGameSession
         {
             TeamName = PlayerTeam.Name,
             Today = Today,
-            NextEvent = "Caspian Grand Prix",
+            NextEvent = $"{NextEvent.Circuit.Name} ({NextEvent.Date:yyyy-MM-dd})",
             BudgetRemainingCents = PlayerTeam.Budget.Cents,
             ChampionshipPosition = position
         };
@@ -134,7 +163,13 @@ public sealed class GameSession : IGameSession
                     DriverPace = driver.Pace,
                     Consistency = driver.Consistency,
                     TyreManagement = driver.TyreManagement,
-                    CarPaceFactor = TeamPaceFactor(teamIndex) + driverIndex * 0.003,
+                    Racecraft = driver.Racecraft,
+                    Focus = driver.Focus,
+                    WetSkill = driver.WetSkill,
+                    Aggression = driver.Aggression,
+                    Defending = driver.Defending,
+                    CarPaceFactor = TeamPaceFactor(teamIndex) +
+                        (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0) + driverIndex * 0.003,
                     StartingTyre = RaceTyreCompound.Medium,
                     FuelLoadKg = 110,
                     IsAi = team != PlayerTeam,
@@ -143,17 +178,166 @@ public sealed class GameSession : IGameSession
             }
         }
 
+        if (Weekend.QualifyingComplete && Weekend.CircuitName == NextEvent.Circuit.Name)
+        {
+            var positions = Weekend.QualifyingResults.ToDictionary(item => item.CarNumber, item => item.GridPosition);
+            grid = grid.OrderBy(car => positions.TryGetValue(car.CarNumber, out var position)
+                ? position
+                : int.MaxValue).ToList();
+        }
+
+        var circuit = NextEvent.Circuit;
         return new RaceSetup
         {
-            TrackId = "caspian-park",
+            TrackId = circuit.Id,
             TotalLaps = laps,
             Seed = seed,
-            BaseLapTimeSeconds = 96.4,
-            TyreWearFactor = 1.05,
-            PitLossTimeSeconds = 19.5,
-            OvertakingDifficulty = 0.8,
+            BaseLapTimeSeconds = circuit.BaseLapTimeSeconds,
+            TyreWearFactor = circuit.TyreWearFactor,
+            PitLossTimeSeconds = circuit.PitLossSeconds,
+            OvertakingDifficulty = circuit.OvertakingDifficulty,
             Grid = grid
         };
+    }
+
+    public RaceWeekend StartWeekend()
+    {
+        if (Weekend.RaceComplete)
+            Weekend = new RaceWeekend(NextEvent.Circuit.Name);
+        return Weekend;
+    }
+
+    public IReadOnlyList<PracticeResult> RunPractice(int seed)
+    {
+        var circuit = NextEvent.Circuit;
+        var random = new SeededRandom(seed);
+        var results = Drivers.Select(driver =>
+        {
+            var team = GetTeamForDriver(driver);
+            var baseLap = circuit.BaseLapTimeSeconds *
+                (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
+                (1 - driver.Pace / 10000.0);
+            var setupQuality = Facilities.PracticeBonus / 100.0;
+            return new PracticeResult
+            {
+                DriverName = driver.Name,
+                BestLapSeconds = baseLap - setupQuality + random.NextGaussian(0, 0.22),
+                LongRunLapSeconds = baseLap * (1 + circuit.TyreWearFactor * 0.035) + random.NextGaussian(0, 0.3),
+                TyreWearPerLap = circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0),
+                EngineerNote = driver.Feedback >= 85
+                    ? "Clear setup feedback; strong direction for qualifying."
+                    : "More running recommended to refine balance."
+            };
+        }).OrderBy(result => result.BestLapSeconds).ToArray();
+        Weekend.PracticeResults = results;
+        Weekend.PracticeComplete = true;
+        _inbox.Add($"{Today:yyyy-MM-dd}: Practice completed at {circuit.Name}; staff reviewed the long-run data.");
+        return results;
+    }
+
+    public IReadOnlyList<QualifyingResult> RunQualifying(int seed)
+    {
+        if (!Weekend.PracticeComplete)
+            throw new InvalidOperationException("Complete practice before qualifying.");
+        var circuit = NextEvent.Circuit;
+        var random = new SeededRandom(seed);
+        var results = Drivers.Select(driver =>
+        {
+            var team = GetTeamForDriver(driver);
+            var lapTime = circuit.BaseLapTimeSeconds *
+                (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
+                (1 - driver.Pace / 10000.0) - driver.Focus / 10000.0 +
+                random.NextGaussian(0, (101 - driver.Consistency) * 0.006);
+            return new { Driver = driver, Time = lapTime };
+        }).OrderBy(item => item.Time).ToArray();
+        Weekend.QualifyingResults = results.Select((item, index) => new QualifyingResult
+        {
+            DriverName = item.Driver.Name,
+            CarNumber = 11 + (_drivers.IndexOf(item.Driver) / 2) * 2 + _drivers.IndexOf(item.Driver) % 2,
+            LapTimeSeconds = item.Time,
+            GridPosition = index + 1
+        }).ToArray();
+        Weekend.QualifyingComplete = true;
+        _inbox.Add($"{Today:yyyy-MM-dd}: Qualifying complete at {circuit.Name}; grid positions are confirmed.");
+        return Weekend.QualifyingResults;
+    }
+
+    public DevelopmentStageResult StartDevelopment(DevelopmentFocus focus, Money budget)
+    {
+        if (_developmentProject is not null &&
+            _developmentProject.Stage is not (DevelopmentStage.Complete or DevelopmentStage.Rejected))
+            throw new InvalidOperationException("Finish or abandon the active development project first.");
+        if (budget.Cents < 10_000_000)
+            throw new ArgumentOutOfRangeException(nameof(budget), "Development needs at least $100,000.");
+        PlayerTeam.Deduct(budget);
+        _developmentProject = new DevelopmentProject(focus, budget, $"{focus} upgrade");
+        return AdvanceDevelopment();
+    }
+
+    public DevelopmentStageResult AdvanceDevelopment()
+    {
+        var project = _developmentProject ??
+            throw new InvalidOperationException("No active development project.");
+        if (project.Stage is DevelopmentStage.Complete or DevelopmentStage.Rejected)
+            throw new InvalidOperationException("The development project has already finished.");
+        project.Progress += 1;
+        if (project.Progress >= 3)
+        {
+            project.Progress = 0;
+            project.Stage = project.Stage switch
+            {
+                DevelopmentStage.WindTunnel => DevelopmentStage.Design,
+                DevelopmentStage.Design => DevelopmentStage.Build,
+                DevelopmentStage.Build => DevelopmentStage.Complete,
+                _ => project.Stage
+            };
+            if (project.Stage == DevelopmentStage.Complete)
+            {
+                var bonus = Facilities.ResearchBonus + Facilities.BuildQualityBonus;
+                project.DownforceDelta = project.Focus == DevelopmentFocus.Aerodynamics ? 7 + bonus * 0.1 : 1;
+                project.DragDelta = project.Focus == DevelopmentFocus.Aerodynamics ? 4 + bonus * 0.08 : 1;
+                project.ReliabilityDelta = project.Focus == DevelopmentFocus.Reliability ? 8 + bonus * 0.15 : -2;
+                project.LifespanDeltaLaps = project.Focus == DevelopmentFocus.Reliability ? 80 + bonus : -20;
+                var capAddition = project.Budget.Cents;
+                if (PlayerCarDesign.CostCapSpentCents + capAddition > CarDesign.CostCapLimitCents)
+                {
+                    project.Stage = DevelopmentStage.Rejected;
+                    _inbox.Add("Regulatory office: The upgrade exceeds the cost cap and cannot be fitted.");
+                    return new DevelopmentStageResult { Stage = project.Stage, Failed = true, Message = "Rejected: cost cap exceeded." };
+                }
+                PlayerCarDesign.Downforce = Math.Min(100, PlayerCarDesign.Downforce + project.DownforceDelta);
+                PlayerCarDesign.DragEfficiency = Math.Min(100, PlayerCarDesign.DragEfficiency + project.DragDelta);
+                PlayerCarDesign.Reliability = Math.Clamp(PlayerCarDesign.Reliability + project.ReliabilityDelta, 0, 100);
+                PlayerCarDesign.ComponentLifeLaps = Math.Max(100, PlayerCarDesign.ComponentLifeLaps + project.LifespanDeltaLaps);
+                PlayerCarDesign.CostCapSpentCents += capAddition;
+                _inbox.Add($"Chief engineer: {project.Focus} package completed; lifespan and regulatory checks passed.");
+                return new DevelopmentStageResult { Stage = project.Stage, Complete = true, Message = "Upgrade complete and legal." };
+            }
+        }
+        return new DevelopmentStageResult
+        {
+            Stage = project.Stage,
+            Message = $"{project.Stage}: work step {project.Progress}/3 complete."
+        };
+    }
+
+    public void UpgradeFacility(string facility)
+    {
+        var cost = Facilities.UpgradeCost(facility);
+        PlayerTeam.Deduct(cost);
+        Facilities.Upgrade(facility);
+        _inbox.Add($"Facilities manager: {facility} upgraded for {FormatMoney(cost)}.");
+    }
+
+    public void CompleteNextRace()
+    {
+        var next = NextEvent;
+        next.Completed = true;
+        Weekend.RaceComplete = true;
+        if (_calendar.All(item => item.Completed))
+            _inbox.Add("Season review: all scheduled races are complete.");
+        else
+            Weekend = new RaceWeekend(NextEvent.Circuit.Name);
     }
 
     public IReadOnlyList<TeamRacePayout> SettleRace(RaceSetup setup, RaceResult result)
@@ -217,6 +401,16 @@ public sealed class GameSession : IGameSession
     private Team GetTeamForDriver(Driver driver) =>
         Teams[_drivers.IndexOf(driver) / 2];
 
+    private int GetTeamIndex(Team team)
+    {
+        for (var index = 0; index < Teams.Count; index++)
+        {
+            if (Teams[index] == team)
+                return index;
+        }
+        throw new InvalidOperationException("The team is not part of this championship.");
+    }
+
     private EntityId GetDriverId(Driver driver) => _driverIds[driver];
 
     private readonly Dictionary<Driver, EntityId> _driverIds = new();
@@ -240,7 +434,13 @@ public sealed class GameSession : IGameSession
                 Pace = pace,
                 Consistency = consistency,
                 TyreManagement = tyreManagement,
-                WetSkill = consistency
+                WetSkill = consistency,
+                Racecraft = Math.Min(98, (pace + consistency) / 2),
+                Focus = Math.Min(98, consistency + 3),
+                Experience = Math.Max(35, consistency - 8),
+                Feedback = Math.Min(97, (consistency + tyreManagement) / 2),
+                Aggression = Math.Min(96, pace - 3),
+                Defending = Math.Min(96, (pace + consistency) / 2)
             };
             _driverIds.Add(driver, StableId($"driver:{name}"));
             drivers.Add(driver);

@@ -16,6 +16,11 @@ namespace GrandPrix.Domain.Race
 
     public class PracticeResult
     {
+        public string DriverName { get; set; } = "";
+        public double BestLapSeconds { get; set; }
+        public double LongRunLapSeconds { get; set; }
+        public double TyreWearPerLap { get; set; }
+        public string EngineerNote { get; set; } = "";
         public PracticeFocus Focus { get; set; }
         public double SetupConfidence { get; set; }   // 0-100, boosts quali & race
         public double TyreWearEstimate { get; set; }  // wear per lap

@@ -1,4 +1,4 @@
-# Running the playable console prototype
+# Quick start
 
 The console app targets .NET 9 and has no external package references.
 
@@ -8,49 +8,40 @@ From the repository root:
 dotnet run --project src\GrandPrix.CLI\GrandPrix.CLI.csproj
 ```
 
-The app starts at the `team>` prompt. Try:
+In an interactive terminal, navigate the on-screen menu with the Up/Down arrow
+keys (or W/S), then press Enter. Number keys are shortcuts and Escape exits.
+When standard input is redirected, the CLI accepts a menu number or command
+name on a line (`status`, `calendar`, `team`, `drivers`, `facilities`,
+`development`, `inbox`, `weekend`, `advance`, `help`, or `exit`).
 
-```text
-status
-market
-hire 1
-advance 31
-race 12 42
-```
+Race weekends automatically run practice, qualifying, and the full race; there
+is no `next` command required. The race screen refreshes live after each lap,
+showing standings, gaps, tyre wear, position-change markers, and recent track
+radio events. Press Space to pause/resume or Q to fast-forward to the finish.
 
-`hire` accepts a market number, optional annual salary in dollars, and optional
-contract term in years. For example, `hire 2 600000 3` offers $600,000 per year
-for three years. Offers below the candidate's asking salary, above the 150%
-negotiation ceiling, or leaving less than six months of payroll runway are
-rejected. A one-month salary signing payment is deducted immediately; payroll
-is paid on the first day of each in-game month.
+The 2026 calendar contains five fictional race venues. `advance` moves the date
+to the next event and processes monthly payroll on the first day of each month.
+Practice provides setup and long-run data, and qualifying establishes the
+starting grid used by the race.
 
-Races use a reproducible seed. The defaults are 12 laps and seed 42. During a
-race, use `next` to advance until every running car completes its next lap,
-`standings` to show
-positions and gaps, `pit <car-number> <tyre> [extra-delay-seconds]` to queue a
-pit stop, and `pace <car-number> <push|standard|save-tyres|save-fuel>` to queue
-a driving mode. `events` lists recent race events. For example:
+Car development requires a chosen focus and a budget of at least $100,000. Each
+project progresses through wind tunnel, design, and build, requiring three work
+steps per stage. Aerodynamic improvements affect pace but can reduce component
+lifespan and reliability. The cost cap is checked when a package is completed.
+Wind tunnel, simulator, and factory upgrades improve development or practice;
+their costs increase with facility level.
 
-```text
-race 8 123
-pit 11 hard
-next
-pace 11 push
-next
-```
+Driver profiles include pace, consistency, tyre management, racecraft, focus,
+wet skill, experience, feedback, aggression, and defending. These affect race
+pace, variability, tyre wear, wet-weather losses, and close-running performance.
 
-Finish the race to see the classification, championship points, prize payout,
-and updated team cash. Race timing, tyre wear, pace variation, and per-car
-random streams are deterministic for a given setup and seed.
-
-Run the package-free race and team-flow checks with:
+Run the dependency-free race and team-flow checks with:
 
 ```powershell
 dotnet run --project tests\GrandPrix.Race.Tests\GrandPrix.Race.Tests.csproj
 ```
 
-Run the existing framework-backed solution tests with:
+Run the framework-backed solution tests with:
 
 ```powershell
 dotnet test GrandPrixTeamPrincipal.sln

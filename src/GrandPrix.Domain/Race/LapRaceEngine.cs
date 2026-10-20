@@ -77,6 +77,11 @@ public sealed class LapRaceEngine : IRaceEngine
                 car.Consistency < 0 || car.Consistency > 100 ||
                 car.TyreManagement < 0 || car.TyreManagement > 100))
             throw new ArgumentException("Grid tyre and fuel values must be valid.", nameof(setup));
+        if (setup.Grid.Any(car => car.Racecraft < 0 || car.Racecraft > 100 ||
+                car.Focus < 0 || car.Focus > 100 || car.WetSkill < 0 || car.WetSkill > 100 ||
+                car.Aggression < 0 || car.Aggression > 100 ||
+                car.Defending < 0 || car.Defending > 100))
+            throw new ArgumentException("Driver attributes must be between 0 and 100.", nameof(setup));
 
         _setup = setup;
         _started = true;
@@ -394,18 +399,21 @@ public sealed class LapRaceEngine : IRaceEngine
         var wearFactor = 1 + car.TyreWear * 0.12;
         var modeFactor = car.CurrentMode switch
         {
-            DriverMode.Push => 0.985,
+            DriverMode.Push => 0.985 - car.Setup.Aggression / 100.0 * 0.002,
             DriverMode.SaveTyres => 1.015,
             DriverMode.SaveFuel => 1.01,
             _ => 1.0
         };
-        var consistency = car.Setup.Consistency / 100.0;
+        var consistency = Math.Min(1, (car.Setup.Consistency * 0.65 +
+            car.Setup.Focus * 0.35) / 100.0);
         var variance = Math.Max(0.9, Math.Min(1.1,
-            1 + car.Random.NextGaussian(0, (1 - consistency) * 0.012)));
+            1 + car.Random.NextGaussian(0, (1 - consistency) * 0.012 +
+                (car.CurrentMode == DriverMode.Push ? car.Setup.Aggression / 100.0 * 0.0015 : 0))));
         var weather = GetWeatherAt(_raceTime);
         var weatherFactor = weather.RainIntensity > 0.1 &&
             car.CurrentTyre is not (RaceTyreCompound.Intermediate or RaceTyreCompound.Wet)
-                ? 1 + weather.RainIntensity * 0.18
+                ? 1 + weather.RainIntensity * 0.18 *
+                    (1 - car.Setup.WetSkill / 100.0 * 0.35)
                 : 1;
 
         var order = _cars.Values
@@ -416,7 +424,9 @@ public sealed class LapRaceEngine : IRaceEngine
         var index = order.IndexOf(car);
         var dirtyAirFactor = index > 0 &&
             GetDistance(order[index - 1]) - GetDistance(car) < 0.12
-                ? 1 + Math.Max(0, _setup!.OvertakingDifficulty) * 0.006
+                ? 1 + Math.Max(0, _setup!.OvertakingDifficulty) *
+                    (0.009 - car.Setup.Racecraft / 100.0 * 0.004 -
+                     (100 - order[index - 1].Setup.Defending) / 100.0 * 0.002)
                 : 1;
 
         return _setup!.BaseLapTimeSeconds * car.Setup.CarPaceFactor * driverSkillFactor *

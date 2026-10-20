@@ -23,6 +23,8 @@ var checks = new (string Name, Action Run)[]
     ("six-month payroll runway validation", Checks.HiringProtectsPayrollRunway),
     ("monthly payroll timing", Checks.PayrollRunsAtMonthBoundary),
     ("race payout updates team cash and championship points", Checks.RacePrizeSettlement),
+    ("five-circuit calendar and weekend session ordering", Checks.CalendarAndWeekendSessions),
+    ("staged development and facility budget management", Checks.DevelopmentAndFacilities),
     ("legacy race simulator repeatability", Checks.LegacySimulatorIsRepeatable)
 };
 
@@ -232,6 +234,52 @@ internal static class Checks
         Check(session.PlayerTeam.Budget.Cents == oldCash + playerPayout.Amount.Cents,
             "Prize payout did not increase team cash.");
         Check(session.PlayerTeam.ChampionshipPoints > 0, "Race points were not added to the team.");
+    }
+
+    public static void CalendarAndWeekendSessions()
+    {
+        var session = new GameSession();
+        Check(session.Circuits.Count == 5 && session.Calendar.Count == 5,
+            "The season must include five circuits and five scheduled events.");
+        var weekend = session.StartWeekend();
+        var practice = session.RunPractice(1701);
+        Check(practice.Count == 10 && weekend.PracticeComplete,
+            "Practice did not produce a result for every driver.");
+        var qualifying = session.RunQualifying(1702);
+        Check(qualifying.Count == 10 && qualifying.Select(item => item.GridPosition).OrderBy(position => position)
+            .SequenceEqual(Enumerable.Range(1, 10)), "Qualifying grid positions are incomplete.");
+
+        var setup = session.CreateRaceSetup(4, 1703);
+        Check(setup.TrackId == session.NextEvent.Circuit.Id, "Race setup used a circuit other than the next event.");
+        var gridPositions = qualifying.ToDictionary(item => item.CarNumber, item => item.GridPosition);
+        Check(setup.Grid.Select(car => gridPositions[car.CarNumber])
+                .SequenceEqual(Enumerable.Range(1, 10)),
+            "Qualifying order was not carried over to the race grid.");
+    }
+
+    public static void DevelopmentAndFacilities()
+    {
+        var session = new GameSession();
+        var startingCash = session.PlayerTeam.Budget.Cents;
+        var initialDownforce = session.PlayerCarDesign.Downforce;
+        session.StartDevelopment(GrandPrix.Domain.Car.DevelopmentFocus.Aerodynamics, new Money(10_000_000));
+        for (var step = 0; step < 8; step++)
+            session.AdvanceDevelopment();
+
+        Check(session.CurrentDevelopment?.Stage == GrandPrix.Domain.Car.DevelopmentStage.Complete,
+            "Development project did not complete after its three stages.");
+        Check(session.PlayerCarDesign.Downforce > initialDownforce,
+            "Completed aero development did not improve downforce.");
+        Check(session.PlayerCarDesign.IsLegal, "Completed development produced an illegal car.");
+        Check(session.PlayerTeam.Budget.Cents < startingCash, "Development cost was not charged to team cash.");
+
+        var level = session.Facilities.WindTunnelLevel;
+        var facilityCost = session.Facilities.UpgradeCost("wind");
+        session.UpgradeFacility("wind");
+        Check(session.Facilities.WindTunnelLevel == level + 1, "Wind tunnel did not upgrade.");
+        Check(session.PlayerTeam.Budget.Cents < startingCash - 10_000_000,
+            "Facility upgrade cost was not charged.");
+        Check(facilityCost.Cents > 0, "Facility upgrade cost was not positive.");
     }
 
     public static void LegacySimulatorIsRepeatable()

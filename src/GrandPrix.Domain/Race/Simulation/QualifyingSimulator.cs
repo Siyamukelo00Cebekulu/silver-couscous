@@ -21,6 +21,8 @@ namespace GrandPrix.Domain.Race
     public class QualifyingResult
     {
         public string DriverName { get; set; } = "";
+        public int CarNumber { get; set; }
+        public double LapTimeSeconds { get; set; }
         public double BestLapTime { get; set; }
         public int GridPosition { get; set; }
     }

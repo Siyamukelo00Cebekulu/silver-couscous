@@ -45,6 +45,11 @@ public sealed class CarSetup
     public int DriverPace { get; set; } = 70;
     public int Consistency { get; set; } = 70;
     public int TyreManagement { get; set; } = 70;
+    public int Racecraft { get; set; } = 70;
+    public int Focus { get; set; } = 70;
+    public int WetSkill { get; set; } = 70;
+    public int Aggression { get; set; } = 60;
+    public int Defending { get; set; } = 70;
     public double CarPaceFactor { get; set; } = 1;
     public RaceTyreCompound StartingTyre { get; set; }
     public double FuelLoadKg { get; set; }
