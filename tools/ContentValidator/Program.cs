@@ -1,4 +1,4 @@
-using System.Text.Json;
+using GrandPrix.Data;
 
 var root = args.Length == 0 ? Path.Combine("content") : args[0];
 if (!Directory.Exists(root))
@@ -11,14 +11,8 @@ var files = Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories
 var failures = new List<string>();
 foreach (var file in files)
 {
-    try
-    {
-        using var document = JsonDocument.Parse(File.ReadAllText(file));
-    }
-    catch (JsonException exception)
-    {
-        failures.Add($"{file}: {exception.Message}");
-    }
+    failures.AddRange(GameContentLoader.ValidateFile(file)
+        .Select(error => $"{file}: {error}"));
 }
 
 if (failures.Count > 0)

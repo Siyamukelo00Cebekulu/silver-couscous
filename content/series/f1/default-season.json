@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "startDate": "2026-03-01T00:00:00",
+  "playerTeamId": "apex-gp",
+  "teams": [
+    { "id": "apex-gp", "name": "Apex GP", "budgetCents": 4200000000, "monthlyBasePayrollCents": 180000000, "carPaceFactor": 0.992 },
+    { "id": "aurora-motorsport", "name": "Aurora Motorsport", "budgetCents": 5000000000, "monthlyBasePayrollCents": 200000000, "carPaceFactor": 0.982 },
+    { "id": "cinder-racing", "name": "Cinder Racing", "budgetCents": 3800000000, "monthlyBasePayrollCents": 165000000, "carPaceFactor": 0.998 },
+    { "id": "northstar-works", "name": "Northstar Works", "budgetCents": 4600000000, "monthlyBasePayrollCents": 190000000, "carPaceFactor": 0.987 },
+    { "id": "velox-engineering", "name": "Velox Engineering", "budgetCents": 3500000000, "monthlyBasePayrollCents": 155000000, "carPaceFactor": 1.004 }
+  ],
+  "drivers": [
+    { "id": "lena-hart", "teamId": "apex-gp", "name": "Lena Hart", "pace": 91, "consistency": 89, "tyreManagement": 87, "wetSkill": 89, "racecraft": 90, "focus": 92, "experience": 81, "feedback": 88, "aggression": 88, "defending": 90 },
+    { "id": "marco-bell", "teamId": "apex-gp", "name": "Marco Bell", "pace": 86, "consistency": 84, "tyreManagement": 82, "wetSkill": 84, "racecraft": 85, "focus": 87, "experience": 76, "feedback": 83, "aggression": 83, "defending": 85 },
+    { "id": "ivo-marin", "teamId": "aurora-motorsport", "name": "Ivo Marin", "pace": 90, "consistency": 85, "tyreManagement": 81, "wetSkill": 85, "racecraft": 87, "focus": 88, "experience": 77, "feedback": 83, "aggression": 87, "defending": 87 },
+    { "id": "sofia-rojas", "teamId": "aurora-motorsport", "name": "Sofia Rojas", "pace": 84, "consistency": 88, "tyreManagement": 90, "wetSkill": 88, "racecraft": 86, "focus": 91, "experience": 80, "feedback": 89, "aggression": 81, "defending": 86 },
+    { "id": "callum-reed", "teamId": "cinder-racing", "name": "Callum Reed", "pace": 87, "consistency": 83, "tyreManagement": 85, "wetSkill": 83, "racecraft": 85, "focus": 86, "experience": 75, "feedback": 84, "aggression": 84, "defending": 85 },
+    { "id": "yuki-tanaka", "teamId": "cinder-racing", "name": "Yuki Tanaka", "pace": 85, "consistency": 91, "tyreManagement": 88, "wetSkill": 91, "racecraft": 88, "focus": 94, "experience": 83, "feedback": 89, "aggression": 82, "defending": 88 },
+    { "id": "amara-okafor", "teamId": "northstar-works", "name": "Amara Okafor", "pace": 83, "consistency": 86, "tyreManagement": 84, "wetSkill": 86, "racecraft": 84, "focus": 89, "experience": 78, "feedback": 85, "aggression": 80, "defending": 84 },
+    { "id": "felix-brandt", "teamId": "northstar-works", "name": "Felix Brandt", "pace": 89, "consistency": 80, "tyreManagement": 78, "wetSkill": 80, "racecraft": 84, "focus": 83, "experience": 72, "feedback": 79, "aggression": 86, "defending": 84 },
+    { "id": "noor-haddad", "teamId": "velox-engineering", "name": "Noor Haddad", "pace": 86, "consistency": 87, "tyreManagement": 86, "wetSkill": 87, "racecraft": 86, "focus": 90, "experience": 79, "feedback": 86, "aggression": 83, "defending": 86 },
+    { "id": "rafael-costa", "teamId": "velox-engineering", "name": "Rafael Costa", "pace": 82, "consistency": 90, "tyreManagement": 89, "wetSkill": 90, "racecraft": 86, "focus": 93, "experience": 82, "feedback": 89, "aggression": 79, "defending": 86 }
+  ],
+  "circuits": [
+    { "id": "caspian-park", "name": "Caspian Park Grand Prix", "country": "Azerbaijan", "raceLaps": 16, "baseLapTimeSeconds": 96.4, "tyreWearFactor": 1.05, "pitLossSeconds": 19.5, "overtakingDifficulty": 0.8, "characteristic": "Fast street circuit" },
+    { "id": "silverstone", "name": "Silverstone Grand Prix", "country": "United Kingdom", "raceLaps": 18, "baseLapTimeSeconds": 91.8, "tyreWearFactor": 1.12, "pitLossSeconds": 21, "overtakingDifficulty": 0.7, "characteristic": "High-speed and aerodynamic" },
+    { "id": "monza", "name": "Monza Grand Prix", "country": "Italy", "raceLaps": 18, "baseLapTimeSeconds": 84.2, "tyreWearFactor": 0.92, "pitLossSeconds": 18, "overtakingDifficulty": 0.55, "characteristic": "Low-drag power circuit" },
+    { "id": "suzuka", "name": "Suzuka Grand Prix", "country": "Japan", "raceLaps": 17, "baseLapTimeSeconds": 94.6, "tyreWearFactor": 1.18, "pitLossSeconds": 22, "overtakingDifficulty": 0.9, "characteristic": "Technical, high commitment" },
+    { "id": "marina-bay", "name": "Marina Bay Grand Prix", "country": "Singapore", "raceLaps": 15, "baseLapTimeSeconds": 103.2, "tyreWearFactor": 1.28, "pitLossSeconds": 24, "overtakingDifficulty": 1.15, "characteristic": "Hot, demanding street circuit" }
+  ],
+  "engineers": [
+    { "id": "mara-voss", "name": "Mara Voss", "askingAnnualSalaryCents": 72000000, "skill": 88 },
+    { "id": "elliot-shaw", "name": "Elliot Shaw", "askingAnnualSalaryCents": 58000000, "skill": 79 },
+    { "id": "nia-calder", "name": "Nia Calder", "askingAnnualSalaryCents": 91000000, "skill": 94 },
+    { "id": "tomas-vale", "name": "Tomas Vale", "askingAnnualSalaryCents": 46000000, "skill": 73 }
+  ]
+}

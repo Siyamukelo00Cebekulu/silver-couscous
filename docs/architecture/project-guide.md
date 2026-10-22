@@ -13,8 +13,9 @@ The primary playable entry point is the terminal application:
 dotnet run --project src\GrandPrix.CLI\GrandPrix.CLI.csproj
 ```
 
-The game currently starts a new in-memory session on March 1, 2026. The CLI
-does not load or save a game between runs.
+The default season begins on March 1, 2026 and is loaded from the embedded,
+validated content in `content/series/f1/default-season.json`. The CLI supports
+named saves, an autosave after race settlement, and startup with `--load SLOT`.
 
 ## Repository map
 
@@ -24,8 +25,10 @@ does not load or save a game between runs.
 | `src\GrandPrix.Application` | Coordinates a game session and connects player actions to the domain. |
 | `src\GrandPrix.Domain` | Game rules and state: teams, drivers, tracks, car development, staff, and race simulation. |
 | `src\GrandPrix.Core` | Shared contracts and primitives such as commands, events, money, IDs, time, and random-number sources. |
-| `src\GrandPrix.AI`, `src\GrandPrix.Data`, `src\GrandPrix.Persistence` | Separate assemblies referenced by the application for supporting capabilities. They are not needed to launch the current CLI flow. |
-| `src\GrandPrix.Series.Abstractions`, `src\GrandPrix.Series.F1` | Series-related project boundaries; the F1 project depends on the series abstractions and domain. |
+| `src\GrandPrix.AI` | Deterministic rival-principal and race-strategy policies; the application dispatches management commands and submits race instructions. |
+| `src\GrandPrix.Data` | Typed initial-season content models, embedded default content, and data validation. |
+| `src\GrandPrix.Persistence` | File-backed save slots and versioned JSON serialization/migrations. |
+| `src\GrandPrix.Series.Abstractions`, `src\GrandPrix.Series.F1` | Series rules contracts and the F1 calendar, scoring, payout, and cost-cap provider. |
 | `src\GrandPrix.Unity.Bridge`, `UnityProject` | Unity integration boundary and Unity client assets. The terminal game can be run independently. |
 | `content` | Data organized by balance, localization, and series. |
 | `tests` | Domain/session, race, persistence, and balance checks. |
@@ -41,16 +44,17 @@ additional assembly boundaries for other clients and future integrations.
 
 | Type | File | Role |
 |---|---|---|
-| `GameSession` | `src\GrandPrix.Application\GameSession.cs` | Creates the initial world and is the main coordinator for one playthrough. It owns the calendar, teams, drivers, player facilities, car design, race-weekend state, inbox, and championship scoring. It exposes operations used by the CLI, such as advancing time, running practice and qualifying, building race setups, and settling race results. |
-| `IGameSession` | `src\GrandPrix.Application\IGameSession.cs` | Small application-facing contract for executing commands, advancing a day, and retrieving dashboard and inbox views. |
+| `GameSessionFactory` | `src\GrandPrix.Application\IGameSessionFactory.cs` | Composes new sessions from validated content and series/AI policies; loads, saves, and lists named save slots. |
+| `GameSession` | `src\GrandPrix.Application\GameSession.cs` | Coordinates one playthrough. It builds the initial world from typed content and the selected series rules, registers command handlers, and owns calendar, team, race-weekend, inbox, and championship state. |
+| `IGameSession` | `src\GrandPrix.Application\IGameSession.cs` | Application-facing operations and presentation models for management, calendar, race-weekend, live-timing, and settlement screens. |
+| `GameSessionSaveData`, `SessionCommandRecord` | `src\GrandPrix.Application\GameSessionSaveData.cs` | Versioned save payload containing the ordered accepted-action history, content schema, and series ID. Replaying the same actions restores management and live-race state deterministically. |
 | `DashboardViewModel`, `InboxItemViewModel` | `src\GrandPrix.Application\IGameSession.cs` | Simple data shapes for presenting session information without exposing console rendering details. |
-| `Program` (top-level statements) | `src\GrandPrix.CLI\Program.cs` | Starts a `GameSession`, presents the menu, reads player choices, calls session operations, and renders results. |
+| `Program` (top-level statements) | `src\GrandPrix.CLI\Program.cs` | Creates or loads a session through the factory, then starts the terminal interface. |
 | `CommandParser` | `src\GrandPrix.CLI\Input\CommandParser.cs` | Converts text commands into CLI command representations for text-based input. |
 
-`GameSession` is currently also the composition root: its constructor creates
-the sample championship, registers command handlers, and wires events. It
-uses deterministic IDs for seeded entities and seedable random sources for
-simulation so runs can be reproduced when given the same seeds.
+The factory loads the season content and supplies series rules and the rival
+principal policy. `GameSession` wires the command bus and event handlers.
+Seeded entity IDs and simulation random sources preserve repeatability.
 
 ### Shared core building blocks
 
@@ -64,6 +68,17 @@ simulation so runs can be reproduced when given the same seeds.
 | `IClock`, `ManualGameClock` | `src\GrandPrix.Core\Abstractions\ClockAndRandom.cs`, `src\GrandPrix.Core\Simulation\ManualGameClock.cs` | Allow game time to advance by explicit player actions rather than wall-clock time. |
 | `IRandom`, `SeededRandom` | `src\GrandPrix.Core\Abstractions\ClockAndRandom.cs`, `src\GrandPrix.Core\Simulation\SeededRandom.cs` | Provide repeatable random values and independent random streams for simulation. |
 | `EntityId`, `Money` | `src\GrandPrix.Core\Common\EntityId.cs`, `src\GrandPrix.Core\Common\Money.cs` | Shared identity and money value types. Money is represented in integer cents. |
+
+### Content, series, AI, and persistence
+
+| Type | File | Role |
+|---|---|---|
+| `GameContentDefinition`, `GameContentLoader` | `src\GrandPrix.Data\GameContentDefinition.cs`, `src\GrandPrix.Data\GameContentLoader.cs` | Deserialize and validate required team, driver, circuit, and engineer data. The default season is embedded from `content/series/f1/default-season.json`. |
+| `ISeriesRulesProvider`, `F1RulesProvider` | `src\GrandPrix.Series.Abstractions\ISeriesRulesProvider.cs`, `src\GrandPrix.Series.F1\F1RulesProvider.cs` | Provide series calendar, points, prize money, and cost-cap limits to the application. |
+| `ITeamPrincipalPolicy`, `ConservativeTeamPrincipalPolicy` | `src\GrandPrix.AI\ITeamPrincipalPolicy.cs`, `src\GrandPrix.AI\ConservativeTeamPrincipalPolicy.cs` | Select a deterministic, affordable rival engineer hire as a `HireEngineerCommand`; the application dispatches it through the same handler as player hires. |
+| `IAiRaceStrategyPolicy`, `ConservativeAiRaceStrategyPolicy` | `src\GrandPrix.AI\IAiRaceStrategyPolicy.cs`, `src\GrandPrix.AI\ConservativeAiRaceStrategyPolicy.cs` | Choose deterministic pit and driving-mode instructions for rival cars; `GameSession` submits them to the live race engine. |
+| `FileSaveStore`, `VersionedSaveSerializer` | `src\GrandPrix.Persistence\FileSaveStore.cs`, `src\GrandPrix.Persistence\VersionedSaveSerializer.cs` | Store validated slot names as files, atomically replace data, and decode/migrate versioned JSON envelopes. |
+| `ContentValidator` | `tools\ContentValidator\Program.cs` | Validate JSON syntax and typed game-content constraints for files under the content root. |
 
 ### Team management domain
 

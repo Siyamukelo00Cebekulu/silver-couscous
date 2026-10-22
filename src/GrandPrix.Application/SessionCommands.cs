@@ -120,6 +120,21 @@ internal sealed class SettleLiveRaceAction : SessionCommand
     }
 }
 
+internal sealed class AdvanceLiveRaceAction : SessionCommand
+{
+    public AdvanceLiveRaceAction(EntityId issuer, double elapsedSeconds) : base(issuer) =>
+        ElapsedSeconds = elapsedSeconds;
+
+    public double ElapsedSeconds { get; }
+}
+
+internal sealed class MarkInboxReadAction : SessionCommand
+{
+    public MarkInboxReadAction(EntityId issuer) : base(issuer)
+    {
+    }
+}
+
 internal sealed class SessionActionEvent : IDomainEvent
 {
     public SessionActionEvent(DateTime occurredOn, string action, string message)

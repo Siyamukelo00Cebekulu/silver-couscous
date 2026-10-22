@@ -127,3 +127,35 @@ role from the task and existing architecture.
   add tests.
 - The existing untracked `tests\GrandPrix.Domain.Tests\EngineerHiredEventTests.cs`
   was present before implementation and is not part of this audit change.
+
+  ## Phase 2 implementation update (2026-10-22)
+
+  The following Phase 2 capabilities are now implemented:
+
+  - `GameSessionFactory` is the CLI composition seam and supplies validated
+    embedded season content, the F1 series rules provider, and deterministic
+    rival-principal policy.
+  - `FileSaveStore` provides slot-safe file persistence. Versioned JSON saves
+    support sequential migrations and are replayed through accepted session
+    commands, including race advancement and pit/mode instructions. The CLI
+    offers save/load commands, startup `--load SLOT`, and an `autosave` after
+    settlement.
+  - The session continuation test saves during a live race, reloads, verifies
+    restored management/calendar/race state, and compares the continued race
+    classification and payouts.
+  - Typed content models validate the default team, driver, circuit, and staff
+    data. The JSON is embedded for runtime use and is also checked by
+    `ContentValidator`.
+  - Series abstractions and the F1 provider own the calendar, points, prize
+    money, and cost-cap limit.
+  - Rival principals select affordable engineer hires and issue the existing
+    `HireEngineerCommand` through the same command bus and handler as player
+    hires.
+  - Opponent pit and driving-mode choices are supplied by an injected,
+    deterministic race-strategy policy in `GrandPrix.AI`; `LapRaceEngine`
+    applies queued commands without embedding opponent decision logic.
+
+  Remaining follow-up: initial world and rules are injectable at the factory,
+  but external content override/configuration is not exposed by the CLI. The
+  default content is embedded, so changes currently require rebuilding the
+  data assembly.

@@ -20,12 +20,15 @@ public sealed class TerminalGameApp
         ("Inbox", "inbox"),
         ("Race weekend", "weekend"),
         ("Advance calendar", "advance"),
+        ("Save game", "save"),
+        ("Load game", "load"),
         ("Help", "help"),
         ("Quit", "exit")
     };
 
     private static readonly int[] RaceSpeeds = { 1, 2, 4, 8, 16 };
-    private readonly IGameSession _session;
+    private IGameSession _session;
+    private readonly IGameSessionFactory _sessionFactory;
     private readonly IAnsiConsole _console;
     private readonly IInputSource _input;
     private readonly bool _plainMode;
@@ -37,11 +40,13 @@ public sealed class TerminalGameApp
         IGameSession session,
         IAnsiConsole console,
         IInputSource input,
-        bool? plainMode = null)
+        bool? plainMode = null,
+        IGameSessionFactory? sessionFactory = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _console = console ?? throw new ArgumentNullException(nameof(console));
         _input = input ?? throw new ArgumentNullException(nameof(input));
+        _sessionFactory = sessionFactory ?? new GameSessionFactory();
         _plainMode = plainMode ?? !input.IsInteractive;
     }
 
@@ -179,6 +184,17 @@ public sealed class TerminalGameApp
         if (text.Length == 0)
             return;
 
+        if (text.StartsWith("save ", StringComparison.OrdinalIgnoreCase))
+        {
+            SaveGame(text[5..].Trim());
+            return;
+        }
+        if (text.StartsWith("load ", StringComparison.OrdinalIgnoreCase))
+        {
+            LoadGame(text[5..].Trim());
+            return;
+        }
+
         switch (text.ToLowerInvariant())
         {
             case "calendar":
@@ -210,6 +226,12 @@ public sealed class TerminalGameApp
                 return;
             case "advance":
                 AdvanceCalendar();
+                return;
+            case "save":
+                SaveGame();
+                return;
+            case "load":
+                LoadGame();
                 return;
             case "status":
                 _status = "Dashboard refreshed.";
@@ -303,6 +325,12 @@ public sealed class TerminalGameApp
                 break;
             case "advance":
                 AdvanceCalendar();
+                break;
+            case "save":
+                SaveGame();
+                break;
+            case "load":
+                LoadGame();
                 break;
             case "help":
                 ShowHelp();
@@ -805,8 +833,86 @@ public sealed class TerminalGameApp
         foreach (var payout in settlement.Payouts.Where(item => item.AmountCents > 0))
             WriteLine($"{payout.TeamName}: {FormatMoney(payout.AmountCents)}" +
                       (payout.IsPlayer ? " · player team" : string.Empty));
-        _status = raceError ??
+        var saved = TrySave("autosave");
+        var raceStatus = raceError ??
             $"Race settled. Team budget: {FormatMoney(settlement.TeamBudgetCents)}.";
+        _status = saved
+            ? $"{raceStatus} Autosave complete."
+            : $"{raceStatus} Autosave failed: {_status}";
+    }
+
+    private void SaveGame(string? slot = null)
+    {
+        slot = string.IsNullOrWhiteSpace(slot)
+            ? ReadLine("Save slot name> ")
+            : slot;
+        if (string.IsNullOrWhiteSpace(slot))
+            return;
+
+        if (TrySave(slot))
+            _status = $"Saved game to '{slot}'.";
+    }
+
+    private bool TrySave(string slot)
+    {
+        try
+        {
+            _sessionFactory.Save(slot, _session);
+            return true;
+        }
+        catch (ArgumentException exception)
+        {
+            _status = exception.Message;
+        }
+        catch (IOException exception)
+        {
+            _status = $"Could not write save: {exception.Message}";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            _status = $"Could not write save: {exception.Message}";
+        }
+
+        return false;
+    }
+
+    private void LoadGame(string? slot = null)
+    {
+        if (string.IsNullOrWhiteSpace(slot))
+        {
+            var saves = _sessionFactory.ListSaves();
+            if (saves.Count == 0)
+            {
+                _status = "No saved games are available.";
+                return;
+            }
+
+            slot = ChooseOption("LOAD GAME", saves.Select(item => (item, item)).ToArray());
+        }
+        if (string.IsNullOrWhiteSpace(slot))
+            return;
+
+        try
+        {
+            _session = _sessionFactory.Load(slot);
+            _status = $"Loaded game from '{slot}'.";
+        }
+        catch (ArgumentException exception)
+        {
+            _status = exception.Message;
+        }
+        catch (InvalidDataException exception)
+        {
+            _status = $"The save is invalid: {exception.Message}";
+        }
+        catch (IOException exception)
+        {
+            _status = $"Could not read save: {exception.Message}";
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            _status = $"Could not read save: {exception.Message}";
+        }
     }
 
     private void ReadPlainRaceInstruction(
@@ -895,7 +1001,8 @@ public sealed class TerminalGameApp
         _console.Write(new Rule("HELP"));
         WriteLine("Use the arrow keys or W/S to navigate, Enter to select, Esc/Backspace to return.");
         WriteLine("Use Q to request a confirmed quit, or ? for this help.");
-        WriteLine("Text commands: status, calendar, team, drivers, staff, facilities, development, inbox, weekend, advance [days], help, exit.");
+        WriteLine("Text commands: status, calendar, team, drivers, staff, facilities, development, inbox, weekend, advance [days], save [slot], load [slot], help, exit.");
+        WriteLine("Settled races are autosaved to the 'autosave' slot. Use --load SLOT at startup to resume a save.");
         WriteLine("During a race: arrows select your car, T selects a tyre, P pits, M changes mode, 1-5 select 1x/2x/4x/8x/16x, Space pauses, Q fast-forwards.");
         WriteFooter("Esc/Backspace returns · Q quit");
     }

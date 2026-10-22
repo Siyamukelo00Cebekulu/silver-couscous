@@ -282,21 +282,6 @@ public sealed class LapRaceEngine : IRaceEngine
             car.NextTyre = null;
             car.NextPitDelaySeconds = 0;
         }
-        else if (car.Setup.IsAi && lap == car.Setup.AiPitLap)
-        {
-            ApplyPitStop(car, ChooseNextTyre(car.CurrentTyre),
-                _setup!.PitLossTimeSeconds, emitted, lap);
-        }
-
-        if (car.Setup.IsAi)
-        {
-            car.CurrentMode = car.TyreWear >= 0.55
-                ? DriverMode.SaveTyres
-                : lap > _setup!.TotalLaps * 0.75
-                    ? DriverMode.Push
-                    : DriverMode.Standard;
-        }
-
         car.LapDurationSeconds = CalculateLapTime(car);
         if (car.PitOnCurrentLap)
             car.LapDurationSeconds += car.CurrentPitDelaySeconds;
@@ -471,9 +456,6 @@ public sealed class LapRaceEngine : IRaceEngine
         RaceTyreCompound.Wet => 0.91,
         _ => throw new ArgumentOutOfRangeException(nameof(tyre))
     };
-
-    private static RaceTyreCompound ChooseNextTyre(RaceTyreCompound current) =>
-        current == RaceTyreCompound.Soft ? RaceTyreCompound.Hard : RaceTyreCompound.Soft;
 
     private double GetDistance(CarRuntime car) =>
         car.LapsCompleted + (car.Finished ? 0 : GetLapProgress(car));

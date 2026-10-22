@@ -1,6 +1,9 @@
 using System.Linq;
+using System.IO;
+using GrandPrix.Application;
 using GrandPrix.Core.Common;
 using GrandPrix.Domain.Staff;
+using GrandPrix.Persistence;
 
 namespace GrandPrix.Domain.Tests;
 
@@ -127,5 +130,106 @@ public class GameSessionTests
         Assert.True(eventWeek.ReachedNextEvent);
         Assert.Equal(session.GetCalendar()[0].Date, eventWeek.Today);
         Assert.Equal(28, eventWeek.DaysAdvanced);
+    }
+
+    [Fact]
+    public void SaveAndLoadReplaysSessionAndContinuesRaceDeterministically()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"grand-prix-session-{System.Guid.NewGuid():N}");
+        try
+        {
+            var factory = new GameSessionFactory(new FileSaveStore(directory));
+            var session = (GameSession)factory.CreateNew();
+            var candidate = session.GetStaff().Candidates[0];
+            Assert.True(session.HireEngineer(
+                candidate.MarketNumber,
+                candidate.AskingAnnualSalaryCents,
+                3).Succeeded);
+            session.AdvanceDays(12);
+            Assert.True(session.UpgradeFacilityView("wind").Succeeded);
+            session.AdvanceToNextEvent();
+            session.RunPracticeView(2026, "setup");
+            session.RunQualifyingView(2027, "soft", "normal", 2);
+            session.StartRace(4, 2028);
+            session.AdvanceRace(15);
+            Assert.True(session.QueuePitStop(11, "hard", 0).Succeeded);
+            session.MarkInboxRead();
+            factory.Save("continuation", session);
+
+            var loaded = (GameSession)factory.Load("continuation");
+
+            Assert.Equal(session.Today, loaded.Today);
+            Assert.Equal(session.PlayerTeam.Budget.Cents, loaded.PlayerTeam.Budget.Cents);
+            Assert.Equal(session.PlayerTeam.Engineers.Count, loaded.PlayerTeam.Engineers.Count);
+            Assert.Equal(session.Teams.Select(team => team.Budget.Cents),
+                loaded.Teams.Select(team => team.Budget.Cents));
+            Assert.Equal(session.Teams.Select(team => team.Engineers.Count),
+                loaded.Teams.Select(team => team.Engineers.Count));
+            Assert.Equal(session.GetCalendar().Select(item => item.Completed),
+                loaded.GetCalendar().Select(item => item.Completed));
+            Assert.Equal(0, loaded.GetDashboard().UnreadInboxCount);
+            AssertRaceTimingEqual(session.GetRaceTiming(), loaded.GetRaceTiming());
+
+            while (!session.GetRaceTiming().Finished)
+            {
+                var originalTiming = session.AdvanceRace(60);
+                var loadedTiming = loaded.AdvanceRace(60);
+                AssertRaceTimingEqual(originalTiming, loadedTiming);
+            }
+
+            Assert.Contains(session.GetRaceTiming().Cars,
+                car => !car.IsPlayerCar && car.PitStops > 0);
+            var originalSettlement = session.SettleLiveRace();
+            var loadedSettlement = loaded.SettleLiveRace();
+            Assert.Equal(originalSettlement.Classification, loadedSettlement.Classification);
+            Assert.Equal(originalSettlement.Payouts.Select(item => item.AmountCents),
+                loadedSettlement.Payouts.Select(item => item.AmountCents));
+            Assert.Equal(session.PlayerTeam.Budget.Cents, loaded.PlayerTeam.Budget.Cents);
+            Assert.Equal(session.GetStandings().Select(item => item.Points),
+                loaded.GetStandings().Select(item => item.Points));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AiRaceStrategyIsIndependentOfApplicationAdvanceStepSize()
+    {
+        var fine = RunRaceWithStepSize(1);
+        var coarse = RunRaceWithStepSize(60);
+
+        Assert.Equal(fine.Cars.Select(car => (car.CarNumber, car.Position)),
+            coarse.Cars.Select(car => (car.CarNumber, car.Position)));
+        Assert.Equal(fine.Cars.Select(car => (car.CarNumber, car.PitStops, car.Tyre)),
+            coarse.Cars.Select(car => (car.CarNumber, car.PitStops, car.Tyre)));
+    }
+
+    private static RaceTimingViewModel RunRaceWithStepSize(double stepSeconds)
+    {
+        var session = new GameSession();
+        session.AdvanceToNextEvent();
+        session.RunPracticeView(2026, "setup");
+        session.RunQualifyingView(2027, "soft", "normal", 2);
+        session.StartRace(20, 2028);
+
+        while (!session.GetRaceTiming().Finished)
+            session.AdvanceRace(stepSeconds);
+
+        return session.GetRaceTiming();
+    }
+
+    private static void AssertRaceTimingEqual(
+        RaceTimingViewModel expected,
+        RaceTimingViewModel actual)
+    {
+        Assert.Equal(expected.CurrentLap, actual.CurrentLap);
+        Assert.Equal(expected.RaceTime, actual.RaceTime);
+        Assert.Equal(expected.Cars.Select(car =>
+                (car.CarNumber, car.Position, car.LapsCompleted, car.GapToLeaderSeconds, car.Tyre, car.TyreWear)),
+            actual.Cars.Select(car =>
+                (car.CarNumber, car.Position, car.LapsCompleted, car.GapToLeaderSeconds, car.Tyre, car.TyreWear)));
     }
 }

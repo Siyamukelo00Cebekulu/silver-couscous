@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using GrandPrix.AI;
 using GrandPrix.Core.Abstractions;
 using GrandPrix.Core.Commands;
 using GrandPrix.Core.Common;
 using GrandPrix.Core.Events;
 using GrandPrix.Core.Simulation;
+using GrandPrix.Data;
 using GrandPrix.Domain.Calendar;
 using GrandPrix.Domain.Car;
 using GrandPrix.Domain.Drivers;
@@ -15,26 +17,28 @@ using GrandPrix.Domain.Facilities;
 using GrandPrix.Domain.Race;
 using GrandPrix.Domain.Staff;
 using GrandPrix.Domain.Team;
+using GrandPrix.Series.Abstractions;
+using GrandPrix.Series.F1;
 
 namespace GrandPrix.Application;
 
 /// <summary>Coordinates the management, race-weekend, and championship state for one game.</summary>
 public sealed class GameSession : IGameSession
 {
-    private static readonly int[] PointsByPosition = { 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 };
-    private static readonly long[] PrizeCentsByPosition =
-    {
-        200_000_000, 150_000_000, 120_000_000, 95_000_000, 75_000_000,
-        60_000_000, 45_000_000, 30_000_000, 20_000_000, 10_000_000
-    };
+    private readonly ISeriesRulesProvider _seriesRules;
+    private readonly ITeamPrincipalPolicy _teamPrincipalPolicy;
+    private readonly IAiRaceStrategyPolicy _aiRaceStrategyPolicy;
+    private readonly int _contentSchemaVersion;
     private readonly InMemoryEventBus _eventBus = new();
     private readonly CommandBus _commandBus;
     private readonly ManualGameClock _clock;
     private readonly List<string> _inbox = new();
     private readonly List<DateTime> _inboxDates = new();
+    private readonly List<SessionCommandRecord> _commandHistory = new();
     private readonly Dictionary<EntityId, int> _driverPoints = new();
     private readonly List<Driver> _drivers = new();
     private readonly Dictionary<EntityId, Team> _teamsById = new();
+    private readonly Dictionary<EntityId, double> _teamPaceFactors = new();
     private readonly IReadOnlyList<EngineerCandidate> _engineerCandidates;
     private readonly List<CalendarRaceEvent> _calendar;
     private readonly Dictionary<Team, CarDesign> _carDesigns = new();
@@ -43,55 +47,120 @@ public sealed class GameSession : IGameSession
     private RaceSetup? _activeRaceSetup;
     private readonly List<RaceEvent> _activeRaceEvents = new();
     private bool _liveRaceSettled;
+    private bool _isRestoring;
     private int _readInboxCount;
     private AdvanceSummaryViewModel? _lastAdvanceSummary;
     private RaceSettlementViewModel? _lastRaceSettlement;
 
-    public GameSession()
+    public GameSession() : this(
+        GameContentLoader.LoadEmbedded(),
+        new F1RulesProvider(),
+        new ConservativeTeamPrincipalPolicy(),
+        new ConservativeAiRaceStrategyPolicy())
     {
-        _clock = new ManualGameClock(new DateTime(2026, 3, 1));
-        PlayerTeam = new Team(
-            StableId("team:apex-gp"),
-            "Apex GP",
-            new Money(4_200_000_000),
-            new Money(180_000_000));
-        Teams = new List<Team>
+    }
+
+    internal GameSession(
+        GameContentDefinition content,
+        ISeriesRulesProvider seriesRules,
+        ITeamPrincipalPolicy teamPrincipalPolicy,
+        IAiRaceStrategyPolicy aiRaceStrategyPolicy)
+    {
+        if (content is null)
+            throw new ArgumentNullException(nameof(content));
+        _seriesRules = seriesRules ?? throw new ArgumentNullException(nameof(seriesRules));
+        _teamPrincipalPolicy = teamPrincipalPolicy ??
+            throw new ArgumentNullException(nameof(teamPrincipalPolicy));
+        _aiRaceStrategyPolicy = aiRaceStrategyPolicy ??
+            throw new ArgumentNullException(nameof(aiRaceStrategyPolicy));
+        var validationErrors = GameContentLoader.Validate(content);
+        if (validationErrors.Count > 0)
+            throw new GameContentException(validationErrors);
+        _contentSchemaVersion = content.SchemaVersion;
+
+        _clock = new ManualGameClock(content.StartDate);
+        var teamsByContentId = content.Teams.ToDictionary(
+            definition => definition.Id,
+            definition => new Team(
+                StableId($"team:{definition.Id}"),
+                definition.Name,
+                new Money(definition.BudgetCents),
+                new Money(definition.MonthlyBasePayrollCents)));
+        Teams = content.Teams.Select(definition => teamsByContentId[definition.Id]).ToArray();
+        PlayerTeam = teamsByContentId[content.PlayerTeamId];
+        foreach (var definition in content.Teams)
         {
-            PlayerTeam,
-            new(StableId("team:aurora-motorsport"), "Aurora Motorsport", new Money(5_000_000_000), new Money(200_000_000)),
-            new(StableId("team:cinder-racing"), "Cinder Racing", new Money(3_800_000_000), new Money(165_000_000)),
-            new(StableId("team:northstar-works"), "Northstar Works", new Money(4_600_000_000), new Money(190_000_000)),
-            new(StableId("team:velox-engineering"), "Velox Engineering", new Money(3_500_000_000), new Money(155_000_000))
-        };
-        foreach (var team in Teams)
+            var team = teamsByContentId[definition.Id];
             _teamsById.Add(team.Id, team);
+            _teamPaceFactors.Add(team.Id, definition.CarPaceFactor);
+        }
         foreach (var team in Teams)
             _carDesigns.Add(team, new CarDesign());
         Facilities = new TeamFacilities();
-        Circuits = new[]
+        Circuits = content.Circuits.Select(definition => new RaceCircuit(
+            definition.Id,
+            definition.Name,
+            definition.Country,
+            definition.RaceLaps,
+            definition.BaseLapTimeSeconds,
+            definition.TyreWearFactor,
+            definition.PitLossSeconds,
+            definition.OvertakingDifficulty,
+            definition.Characteristic)).ToArray();
+        var circuitsById = Circuits.ToDictionary(circuit => circuit.Id);
+        if (_seriesRules.Calendar.Count == 0)
+            throw new InvalidOperationException("The selected series must define at least one calendar round.");
+        if (_seriesRules.CostCapLimitCents <= 0)
+            throw new InvalidOperationException("The selected series must define a positive cost cap.");
+        var previousRoundDay = 0;
+        _calendar = _seriesRules.Calendar.Select(round =>
         {
-            new RaceCircuit("caspian-park", "Caspian Park Grand Prix", "Azerbaijan", 16, 96.4, 1.05, 19.5, 0.8, "Fast street circuit"),
-            new RaceCircuit("silverstone", "Silverstone Grand Prix", "United Kingdom", 18, 91.8, 1.12, 21, 0.7, "High-speed and aerodynamic"),
-            new RaceCircuit("monza", "Monza Grand Prix", "Italy", 18, 84.2, 0.92, 18, 0.55, "Low-drag power circuit"),
-            new RaceCircuit("suzuka", "Suzuka Grand Prix", "Japan", 17, 94.6, 1.18, 22, 0.9, "Technical, high commitment"),
-            new RaceCircuit("marina-bay", "Marina Bay Grand Prix", "Singapore", 15, 103.2, 1.28, 24, 1.15, "Hot, demanding street circuit")
-        };
-        _calendar = Circuits.Select((circuit, index) =>
-            new CalendarRaceEvent(_clock.Today.AddDays(35 + index * 35), circuit)).ToList();
+            if (!circuitsById.TryGetValue(round.CircuitId, out var circuit))
+                throw new InvalidOperationException(
+                    $"Series '{_seriesRules.SeriesId}' references unknown circuit '{round.CircuitId}'.");
+            if (round.DaysAfterSeasonStart <= previousRoundDay)
+                throw new InvalidOperationException(
+                    $"Series '{_seriesRules.SeriesId}' calendar offsets must be strictly increasing.");
+            previousRoundDay = round.DaysAfterSeasonStart;
+            return new CalendarRaceEvent(_clock.Today.AddDays(round.DaysAfterSeasonStart), circuit);
+        }).ToList();
         Weekend = new RaceWeekend(NextEvent.Circuit.Name);
 
-        Drivers = CreateDrivers();
-        _drivers.AddRange(Drivers);
-        _engineerCandidates = new[]
+        var driverDefinitions = content.Teams
+            .SelectMany(team => content.Drivers.Where(driver => driver.TeamId == team.Id))
+            .ToArray();
+        Drivers = driverDefinitions.Select(definition => new Driver
         {
-            new EngineerCandidate(StableId("engineer:mara-voss"), "Mara Voss", new Money(72_000_000), 88),
-            new EngineerCandidate(StableId("engineer:elliot-shaw"), "Elliot Shaw", new Money(58_000_000), 79),
-            new EngineerCandidate(StableId("engineer:nia-calder"), "Nia Calder", new Money(91_000_000), 94),
-            new EngineerCandidate(StableId("engineer:tomas-vale"), "Tomas Vale", new Money(46_000_000), 73)
-        };
+            Name = definition.Name,
+            Pace = definition.Pace,
+            Consistency = definition.Consistency,
+            TyreManagement = definition.TyreManagement,
+            WetSkill = definition.WetSkill,
+            Racecraft = definition.Racecraft,
+            Focus = definition.Focus,
+            Experience = definition.Experience,
+            Feedback = definition.Feedback,
+            Aggression = definition.Aggression,
+            Defending = definition.Defending
+        }).ToArray();
+        _drivers.AddRange(Drivers);
+        for (var index = 0; index < Drivers.Count; index++)
+            _driverIds.Add(Drivers[index], StableId($"driver:{driverDefinitions[index].Name}"));
+        _engineerCandidates = content.Engineers.Select(definition =>
+            new EngineerCandidate(
+                StableId($"engineer:{definition.Id}"),
+                definition.Name,
+                new Money(definition.AskingAnnualSalaryCents),
+                definition.Skill)).ToArray();
 
         _commandBus = new CommandBus(_eventBus);
-        _commandBus.Register(new HireEngineerHandler(PlayerTeam, _engineerCandidates, _clock));
+        var engineerHandlers = Teams.ToDictionary(
+            team => team.Id,
+            team => new HireEngineerHandler(team, _engineerCandidates, _clock));
+        _commandBus.Register(new DelegateCommandHandler<HireEngineerCommand>(command =>
+            engineerHandlers.TryGetValue(command.Issuer, out var handler)
+                ? handler.Handle(command)
+                : CommandResult.Fail("The issuing team is not part of this championship.")));
         _commandBus.Register(new DelegateCommandHandler<UpgradeFacilityAction>(command =>
             HandleAction("facility upgraded", () =>
             {
@@ -118,8 +187,21 @@ public sealed class GameSession : IGameSession
                 _lastRaceSettlement = SettleLiveRaceCore();
                 return "Race settlement completed.";
             })));
+        _commandBus.Register(new DelegateCommandHandler<AdvanceLiveRaceAction>(command =>
+            HandleAction("race advanced", () =>
+            {
+                AdvanceRaceCore(command.ElapsedSeconds);
+                return $"Race advanced by {command.ElapsedSeconds:0.###} seconds.";
+            })));
+        _commandBus.Register(new DelegateCommandHandler<MarkInboxReadAction>(_ =>
+            HandleAction("inbox read", () =>
+            {
+                _readInboxCount = _inbox.Count;
+                return "Inbox marked as read.";
+            })));
         _eventBus.Subscribe<EngineerHiredEvent>(evt =>
-            AddInboxMessage($"{evt.OccurredOn:yyyy-MM-dd}: {GetEngineerName(evt.EngineerId)} joined {PlayerTeam.Name}.",
+            AddInboxMessage(
+                $"{evt.OccurredOn:yyyy-MM-dd}: {GetEngineerName(evt.EngineerId)} joined {GetTeamName(evt.TeamId)}.",
                 evt.OccurredOn));
         _clock.DayAdvanced += OnDayAdvanced;
         AddInboxMessage("Chief engineer: Start with a wind-tunnel study to identify a legal aerodynamic gain.");
@@ -141,7 +223,72 @@ public sealed class GameSession : IGameSession
     public CarDesign PlayerCarDesign => _carDesigns[PlayerTeam];
     public DevelopmentProject? CurrentDevelopment => _developmentProject;
 
-    public CommandResult Execute(ICommand command) => _commandBus.Dispatch(command);
+    public CommandResult Execute(ICommand command)
+    {
+        var result = _commandBus.Dispatch(command);
+        if (result.Succeeded && !_isRestoring)
+            _commandHistory.Add(ToCommandRecord(command));
+        return result;
+    }
+
+    internal GameSessionSaveData CaptureSaveData() => new()
+    {
+        ContentSchemaVersion = _contentSchemaVersion,
+        SeriesId = _seriesRules.SeriesId,
+        RaceStrategyPolicyId = _aiRaceStrategyPolicy.PolicyId,
+        Commands = _commandHistory.Select(CloneCommandRecord).ToList()
+    };
+
+    internal void RestoreSaveData(GameSessionSaveData saveData)
+    {
+        if (saveData is null)
+            throw new ArgumentNullException(nameof(saveData));
+        if (saveData.Commands is null)
+            throw new InvalidDataException("Save data does not contain a command history.");
+        if (saveData.ContentSchemaVersion != _contentSchemaVersion)
+            throw new InvalidDataException(
+                $"Save content schema {saveData.ContentSchemaVersion} does not match " +
+                $"the current schema {_contentSchemaVersion}.");
+        if (!string.Equals(saveData.SeriesId, _seriesRules.SeriesId, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"Save series '{saveData.SeriesId}' does not match the current series '{_seriesRules.SeriesId}'.");
+        if (!string.Equals(
+                saveData.RaceStrategyPolicyId,
+                _aiRaceStrategyPolicy.PolicyId,
+                StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"Save race strategy '{saveData.RaceStrategyPolicyId}' does not match the current policy.");
+
+        _isRestoring = true;
+        try
+        {
+            for (var index = 0; index < saveData.Commands.Count; index++)
+            {
+                ICommand command;
+                try
+                {
+                    command = FromCommandRecord(saveData.Commands[index]);
+                }
+                catch (FormatException exception)
+                {
+                    throw new InvalidDataException(
+                        $"Save command {index + 1} contains an invalid value.",
+                        exception);
+                }
+                var result = _commandBus.Dispatch(command);
+                if (!result.Succeeded)
+                    throw new InvalidDataException(
+                        $"Save command {index + 1} could not be replayed: {result.Error}");
+            }
+
+            _commandHistory.Clear();
+            _commandHistory.AddRange(saveData.Commands.Select(CloneCommandRecord));
+        }
+        finally
+        {
+            _isRestoring = false;
+        }
+    }
 
     public CommandResult HireEngineer(int marketNumber, long offeredAnnualSalaryCents, int contractYears)
     {
@@ -169,6 +316,7 @@ public sealed class GameSession : IGameSession
             throw new ArgumentOutOfRangeException(nameof(days), "Advance between 1 and 3650 days.");
 
         DispatchOrThrow(new AdvanceCalendarAction(PlayerTeam.Id, days, toNextEvent: false));
+        RunRivalPrincipalTurns();
         return _lastAdvanceSummary ??
             throw new InvalidOperationException("Calendar advancement completed without a summary.");
     }
@@ -199,6 +347,7 @@ public sealed class GameSession : IGameSession
     public AdvanceSummaryViewModel AdvanceToNextEvent()
     {
         DispatchOrThrow(new AdvanceCalendarAction(PlayerTeam.Id, days: null, toNextEvent: true));
+        RunRivalPrincipalTurns();
         return _lastAdvanceSummary ??
             throw new InvalidOperationException("Calendar advancement completed without a summary.");
     }
@@ -249,7 +398,7 @@ public sealed class GameSession : IGameSession
             ChampionshipPosition = position,
             ChampionshipPoints = PlayerTeam.ChampionshipPoints,
             CostCapSpentCents = design.CostCapSpentCents,
-            CostCapHeadroomCents = Math.Max(0, CarDesign.CostCapLimitCents - design.CostCapSpentCents),
+            CostCapHeadroomCents = Math.Max(0, _seriesRules.CostCapLimitCents - design.CostCapSpentCents),
             Downforce = design.Downforce,
             DragEfficiency = design.DragEfficiency,
             Reliability = design.Reliability,
@@ -268,7 +417,8 @@ public sealed class GameSession : IGameSession
             Unread = index >= _readInboxCount
         }).ToArray();
 
-    public void MarkInboxRead() => _readInboxCount = _inbox.Count;
+    public void MarkInboxRead() =>
+        DispatchOrThrow(new MarkInboxReadAction(PlayerTeam.Id));
 
     public IReadOnlyList<DriverViewModel> GetDrivers() =>
         Drivers.Select((driver, index) => new DriverViewModel
@@ -366,17 +516,24 @@ public sealed class GameSession : IGameSession
         _activeRaceEngine.Start(_activeRaceSetup, new SeededRandom(seed).Fork("race"));
         _activeRaceEvents.Clear();
         _liveRaceSettled = false;
+        SubmitAiRaceCommands();
         return GetRaceTiming();
     }
 
     public RaceTimingViewModel AdvanceRace(double elapsedSeconds)
+    {
+        DispatchOrThrow(new AdvanceLiveRaceAction(PlayerTeam.Id, elapsedSeconds));
+        return GetRaceTiming();
+    }
+
+    private void AdvanceRaceCore(double elapsedSeconds)
     {
         if (double.IsNaN(elapsedSeconds) || double.IsInfinity(elapsedSeconds) ||
             elapsedSeconds <= 0 || elapsedSeconds > 60)
             throw new ArgumentOutOfRangeException(nameof(elapsedSeconds), "Advance a race by more than 0 and at most 60 seconds.");
         var engine = GetActiveRaceEngine();
         _activeRaceEvents.AddRange(engine.Advance(TimeSpan.FromSeconds(elapsedSeconds)));
-        return GetRaceTiming();
+        SubmitAiRaceCommands();
     }
 
     public RaceTimingViewModel GetRaceTiming()
@@ -497,6 +654,7 @@ public sealed class GameSession : IGameSession
     {
         _lastRaceSettlement = null;
         DispatchOrThrow(new SettleLiveRaceAction(PlayerTeam.Id));
+        RunRivalPrincipalTurns();
         return _lastRaceSettlement ??
             throw new InvalidOperationException("Race settlement completed without a result.");
     }
@@ -592,8 +750,8 @@ public sealed class GameSession : IGameSession
             Reliability = PlayerCarDesign.Reliability,
             ComponentLifeLaps = PlayerCarDesign.ComponentLifeLaps,
             CostCapSpentCents = PlayerCarDesign.CostCapSpentCents,
-            CostCapLimitCents = CarDesign.CostCapLimitCents,
-            CostCapHeadroomCents = Math.Max(0, CarDesign.CostCapLimitCents - PlayerCarDesign.CostCapSpentCents),
+            CostCapLimitCents = _seriesRules.CostCapLimitCents,
+            CostCapHeadroomCents = Math.Max(0, _seriesRules.CostCapLimitCents - PlayerCarDesign.CostCapSpentCents),
             HasActiveProject = project is not null &&
                 project.Stage is not (DevelopmentStage.Complete or DevelopmentStage.Rejected),
             ProjectFocus = project?.Focus.ToString() ?? string.Empty,
@@ -633,14 +791,13 @@ public sealed class GameSession : IGameSession
                     WetSkill = driver.WetSkill,
                     Aggression = driver.Aggression,
                     Defending = driver.Defending,
-                    CarPaceFactor = TeamPaceFactor(teamIndex) +
+                    CarPaceFactor = _teamPaceFactors[team.Id] +
                         (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 -
                             (Weekend.PracticeComplete ? Weekend.RacePaceBonus : 0) : 0) +
                         driverIndex * 0.003,
                     StartingTyre = RaceTyreCompound.Medium,
                     FuelLoadKg = 110,
-                    IsAi = team != PlayerTeam,
-                    AiPitLap = team == PlayerTeam ? 0 : Math.Max(2, laps / 2)
+                    IsAi = team != PlayerTeam
                 });
             }
         }
@@ -696,7 +853,7 @@ public sealed class GameSession : IGameSession
         {
             var team = GetTeamForDriver(driver);
             var baseLap = circuit.BaseLapTimeSeconds *
-                (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
+                (_teamPaceFactors[team.Id] + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
                 (1 - driver.Pace / 10000.0);
             var setupQuality = Facilities.PracticeBonus / 100.0;
             var tyreWearPerLap = RaceTyreModel.WearPerLap(
@@ -772,7 +929,7 @@ public sealed class GameSession : IGameSession
             } : 1;
             var runBonus = playerDriver ? (runs - 1) * 0.0012 : 0;
             var lapTime = circuit.BaseLapTimeSeconds *
-                (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
+                (_teamPaceFactors[team.Id] + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
                 (1 - driver.Pace / 10000.0) - driver.Focus / 10000.0 +
                 random.NextGaussian(0, (101 - driver.Consistency) *
                     (playerDriver && risk == QualiRisk.Push ? 0.009 : 0.006));
@@ -883,7 +1040,7 @@ public sealed class GameSession : IGameSession
                 project.ReliabilityDelta = project.Focus == DevelopmentFocus.Reliability ? 8 + bonus * 0.15 : -2;
                 project.LifespanDeltaLaps = project.Focus == DevelopmentFocus.Reliability ? 80 + bonus : -20;
                 var capAddition = project.Budget.Cents;
-                if (PlayerCarDesign.CostCapSpentCents + capAddition > CarDesign.CostCapLimitCents)
+                if (PlayerCarDesign.CostCapSpentCents + capAddition > _seriesRules.CostCapLimitCents)
                 {
                     project.Stage = DevelopmentStage.Rejected;
                     AddInboxMessage("Regulatory office: The upgrade exceeds the cost cap and cannot be fitted.");
@@ -933,8 +1090,8 @@ public sealed class GameSession : IGameSession
         for (var index = 0; index < result.Classification.Count; index++)
         {
             var car = byId[result.Classification[index]];
-            var points = index < PointsByPosition.Length ? PointsByPosition[index] : 0;
-            var prize = index < PrizeCentsByPosition.Length ? PrizeCentsByPosition[index] : 0;
+            var points = _seriesRules.PointsForPosition(index + 1);
+            var prize = _seriesRules.PrizeCentsForPosition(index + 1);
             _teamsById[car.TeamId].AddPoints(points);
             _driverPoints[car.DriverId] = _driverPoints.TryGetValue(car.DriverId, out var current)
                 ? current + points
@@ -1085,6 +1242,168 @@ public sealed class GameSession : IGameSession
         return result;
     }
 
+    private static SessionCommandRecord ToCommandRecord(ICommand command)
+    {
+        var record = command switch
+        {
+            HireEngineerCommand hire => new SessionCommandRecord
+            {
+                Type = "hire-engineer",
+                Text1 = hire.CandidateId.ToString(),
+                Long1 = hire.OfferedSalary.Cents,
+                Int1 = hire.ContractYears
+            },
+            UpgradeFacilityAction upgrade => new SessionCommandRecord
+            {
+                Type = "upgrade-facility",
+                Text1 = upgrade.Facility
+            },
+            StartDevelopmentAction development => new SessionCommandRecord
+            {
+                Type = "start-development",
+                Text1 = development.Focus,
+                Long1 = development.BudgetCents
+            },
+            AdvanceDevelopmentAction => new SessionCommandRecord { Type = "advance-development" },
+            AdvanceCalendarAction advance => new SessionCommandRecord
+            {
+                Type = "advance-calendar",
+                Int1 = advance.Days ?? 0,
+                Bool1 = advance.ToNextEvent
+            },
+            RunPracticeAction practice => new SessionCommandRecord
+            {
+                Type = "run-practice",
+                Int1 = practice.Seed,
+                Text1 = practice.Focus
+            },
+            RunQualifyingAction qualifying => new SessionCommandRecord
+            {
+                Type = "run-qualifying",
+                Int1 = qualifying.Seed,
+                Int2 = qualifying.Runs,
+                Text1 = qualifying.Tyre,
+                Text2 = qualifying.Risk
+            },
+            StartRaceAction race => new SessionCommandRecord
+            {
+                Type = "start-race",
+                Int1 = race.Laps,
+                Int2 = race.Seed
+            },
+            QueuePitStopAction pit => new SessionCommandRecord
+            {
+                Type = "queue-pit-stop",
+                Int1 = pit.CarNumber,
+                Text1 = pit.Tyre,
+                Double1 = pit.ExtraDelaySeconds
+            },
+            SetRaceModeAction mode => new SessionCommandRecord
+            {
+                Type = "set-race-mode",
+                Int1 = mode.CarNumber,
+                Text1 = mode.Mode
+            },
+            SettleLiveRaceAction => new SessionCommandRecord { Type = "settle-race" },
+            AdvanceLiveRaceAction advanceRace => new SessionCommandRecord
+            {
+                Type = "advance-race",
+                Double1 = advanceRace.ElapsedSeconds
+            },
+            MarkInboxReadAction => new SessionCommandRecord { Type = "mark-inbox-read" },
+            _ => throw new InvalidOperationException(
+                $"Command type {command.GetType().Name} cannot be stored in a session save.")
+        };
+        record.Issuer = command.Issuer.ToString();
+        return record;
+    }
+
+    private static ICommand FromCommandRecord(SessionCommandRecord record)
+    {
+        if (record is null)
+            throw new InvalidDataException("Save command history contains a null command.");
+
+        var issuerText = RequireText(record.Issuer, nameof(record.Issuer));
+        if (!Guid.TryParse(issuerText, out var issuerId))
+            throw new InvalidDataException("Save command issuer is not a valid entity ID.");
+        var issuer = new EntityId(issuerId);
+        return record.Type switch
+        {
+            "hire-engineer" => new HireEngineerCommand(
+                issuer,
+                ParseEntityId(record.Text1, nameof(record.Text1)),
+                new Money(record.Long1),
+                record.Int1),
+            "upgrade-facility" => new UpgradeFacilityAction(
+                issuer,
+                RequireText(record.Text1, nameof(record.Text1))),
+            "start-development" => new StartDevelopmentAction(
+                issuer,
+                RequireText(record.Text1, nameof(record.Text1)),
+                record.Long1),
+            "advance-development" => new AdvanceDevelopmentAction(issuer),
+            "advance-calendar" => new AdvanceCalendarAction(
+                issuer,
+                record.Bool1 ? null : record.Int1,
+                record.Bool1),
+            "run-practice" => new RunPracticeAction(
+                issuer,
+                record.Int1,
+                RequireText(record.Text1, nameof(record.Text1))),
+            "run-qualifying" => new RunQualifyingAction(
+                issuer,
+                record.Int1,
+                RequireText(record.Text1, nameof(record.Text1)),
+                RequireText(record.Text2, nameof(record.Text2)),
+                record.Int2),
+            "start-race" => new StartRaceAction(
+                issuer,
+                record.Int1,
+                record.Int2),
+            "queue-pit-stop" => new QueuePitStopAction(
+                issuer,
+                record.Int1,
+                RequireText(record.Text1, nameof(record.Text1)),
+                record.Double1),
+            "set-race-mode" => new SetRaceModeAction(
+                issuer,
+                record.Int1,
+                RequireText(record.Text1, nameof(record.Text1))),
+            "settle-race" => new SettleLiveRaceAction(issuer),
+            "advance-race" => new AdvanceLiveRaceAction(
+                issuer,
+                record.Double1),
+            "mark-inbox-read" => new MarkInboxReadAction(issuer),
+            _ => throw new InvalidDataException($"Unknown saved command type '{record.Type}'.")
+        };
+    }
+
+    private static string RequireText(string? value, string property) =>
+        !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new InvalidDataException($"Save command is missing {property}.");
+
+    private static EntityId ParseEntityId(string? value, string property)
+    {
+        var text = RequireText(value, property);
+        if (!Guid.TryParse(text, out var id))
+            throw new InvalidDataException($"Save command {property} is not a valid entity ID.");
+        return new EntityId(id);
+    }
+
+    private static SessionCommandRecord CloneCommandRecord(SessionCommandRecord command) => new()
+    {
+        Type = command.Type,
+        Issuer = command.Issuer,
+        Text1 = command.Text1,
+        Text2 = command.Text2,
+        Int1 = command.Int1,
+        Int2 = command.Int2,
+        Long1 = command.Long1,
+        Double1 = command.Double1,
+        Bool1 = command.Bool1
+    };
+
     private static ActionResultViewModel ToActionResult(CommandResult result) =>
         new()
         {
@@ -1126,6 +1445,11 @@ public sealed class GameSession : IGameSession
     private string GetEngineerName(EntityId id) =>
         _engineerCandidates.First(candidate => candidate.Id == id).Name;
 
+    private string GetTeamName(EntityId id) =>
+        _teamsById.TryGetValue(id, out var team)
+            ? team.Name
+            : throw new InvalidOperationException($"Unknown team ID '{id}'.");
+
     private void AddInboxMessage(string message, DateTime? date = null)
     {
         _inbox.Add(message);
@@ -1158,61 +1482,33 @@ public sealed class GameSession : IGameSession
     private Team GetTeamForDriver(Driver driver) =>
         Teams[_drivers.IndexOf(driver) / 2];
 
-    private int GetTeamIndex(Team team)
+    private void RunRivalPrincipalTurns()
     {
-        for (var index = 0; index < Teams.Count; index++)
+        foreach (var team in Teams.Where(team => team != PlayerTeam))
         {
-            if (Teams[index] == team)
-                return index;
+            var command = _teamPrincipalPolicy.ChooseAction(team, _engineerCandidates);
+            if (command is null)
+                continue;
+
+            var result = Execute(command);
+            if (!result.Succeeded)
+                throw new InvalidOperationException(
+                    $"Rival team '{team.Name}' action was rejected: {result.Error}");
         }
-        throw new InvalidOperationException("The team is not part of this championship.");
+    }
+
+    private void SubmitAiRaceCommands()
+    {
+        var engine = GetActiveRaceEngine();
+        var setup = _activeRaceSetup ??
+            throw new InvalidOperationException("There is no active race setup.");
+        foreach (var command in _aiRaceStrategyPolicy.ChooseCommands(setup, engine.GetSnapshot()))
+            engine.Submit(command);
     }
 
     private EntityId GetDriverId(Driver driver) => _driverIds[driver];
 
     private readonly Dictionary<Driver, EntityId> _driverIds = new();
-
-    private List<Driver> CreateDrivers()
-    {
-        var definitions = new[]
-        {
-            ("Lena Hart", 91, 89, 87), ("Marco Bell", 86, 84, 82),
-            ("Ivo Marin", 90, 85, 81), ("Sofia Rojas", 84, 88, 90),
-            ("Callum Reed", 87, 83, 85), ("Yuki Tanaka", 85, 91, 88),
-            ("Amara Okafor", 83, 86, 84), ("Felix Brandt", 89, 80, 78),
-            ("Noor Haddad", 86, 87, 86), ("Rafael Costa", 82, 90, 89)
-        };
-        var drivers = new List<Driver>(definitions.Length);
-        foreach (var (name, pace, consistency, tyreManagement) in definitions)
-        {
-            var driver = new Driver
-            {
-                Name = name,
-                Pace = pace,
-                Consistency = consistency,
-                TyreManagement = tyreManagement,
-                WetSkill = consistency,
-                Racecraft = Math.Min(98, (pace + consistency) / 2),
-                Focus = Math.Min(98, consistency + 3),
-                Experience = Math.Max(35, consistency - 8),
-                Feedback = Math.Min(97, (consistency + tyreManagement) / 2),
-                Aggression = Math.Min(96, pace - 3),
-                Defending = Math.Min(96, (pace + consistency) / 2)
-            };
-            _driverIds.Add(driver, StableId($"driver:{name}"));
-            drivers.Add(driver);
-        }
-        return drivers;
-    }
-
-    private static double TeamPaceFactor(int teamIndex) => teamIndex switch
-    {
-        0 => 0.992,
-        1 => 0.982,
-        2 => 0.998,
-        3 => 0.987,
-        _ => 1.004
-    };
 
     private static EntityId StableId(string key)
     {

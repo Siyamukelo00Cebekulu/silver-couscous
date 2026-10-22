@@ -1,6 +1,6 @@
 # Quick start
 
-The console app targets .NET 9 and has no external package references.
+The console app targets .NET 9.
 
 From the repository root:
 
@@ -12,7 +12,13 @@ In an interactive terminal, navigate the on-screen menu with the Up/Down arrow
 keys (or W/S), then press Enter. Number keys are shortcuts and Escape exits.
 When standard input is redirected, the CLI accepts a menu number or command
 name on a line (`status`, `calendar`, `team`, `drivers`, `facilities`,
-`staff`, `development`, `inbox`, `weekend`, `advance`, `help`, or `exit`).
+`staff`, `development`, `inbox`, `weekend`, `advance`, `save [slot]`,
+`load [slot]`, `help`, or `exit`).
+
+Use **Save game** or `save [slot]` to save a career, and **Load game** or
+`load [slot]` to restore one. Settled races are autosaved to the `autosave`
+slot. On startup, pass `--load SLOT` to resume a named save. Save files are
+stored under the current user's local application data directory.
 
 Race weekends automatically run practice, qualifying, and the full race; there
 is no `next` command required. Before sessions, choose a practice focus
@@ -34,6 +40,10 @@ Use **Hire engineer** to recruit from the staff market. Engineers have a
 strategy skill, require a signing payment, and add salary to monthly payroll.
 Your best engineer supplies the staff side of race tyre recommendations; driver
 feedback is included alongside it.
+
+Rival principals make deterministic hiring decisions through the same engineer
+contract validation and command handling used by the player when the calendar
+advances or a race is settled.
 
 The 2026 calendar contains five fictional race venues. `advance` moves the date
 to the next event and processes monthly payroll on the first day of each month.

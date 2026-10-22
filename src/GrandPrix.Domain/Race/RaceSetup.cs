@@ -81,7 +81,6 @@ public sealed class CarSetup
     public RaceTyreCompound StartingTyre { get; set; }
     public double FuelLoadKg { get; set; }
     public bool IsAi { get; set; }
-    public int AiPitLap { get; set; }
 }
 
 public sealed class WeatherPoint

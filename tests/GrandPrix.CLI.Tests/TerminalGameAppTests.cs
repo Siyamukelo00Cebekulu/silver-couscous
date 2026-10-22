@@ -11,32 +11,45 @@ public sealed class TerminalGameAppTests
     [Fact]
     public void PlainScriptCanHireAdvanceRunRacePitAndSettle()
     {
-        var console = new TestConsole();
-        var input = new ScriptedInputSource(
-            "staff",
-            "1",
-            "y",
-            "advance",
-            "event",
-            "weekend",
-            "setup",
-            "soft",
-            "normal",
-            "2",
-            "pit 11 hard",
-            "exit",
-            "y");
-        var session = new GameSession();
-        var app = new TerminalGameApp(session, console, input, plainMode: true);
+        var directory = Path.Combine(Path.GetTempPath(), $"grand-prix-cli-{Guid.NewGuid():N}");
+        try
+        {
+            var console = new TestConsole();
+            var input = new ScriptedInputSource(
+                "staff",
+                "1",
+                "y",
+                "advance",
+                "event",
+                "weekend",
+                "setup",
+                "soft",
+                "normal",
+                "2",
+                "pit 11 hard",
+                "exit",
+                "y");
+            var factory = new GameSessionFactory(
+                new GrandPrix.Persistence.FileSaveStore(directory));
+            var session = (GameSession)factory.CreateNew();
+            var app = new TerminalGameApp(
+                session, console, input, plainMode: true, sessionFactory: factory);
 
-        app.Run();
+            app.Run();
 
-        Assert.Single(session.GetStaff().Engineers);
-        Assert.Equal(1, session.GetCalendar().Count(item => item.Completed));
-        Assert.True(session.GetStandings().Sum(item => item.IsPlayer ? item.Points : 0) > 0);
-        Assert.Contains("FINAL CLASSIFICATION", console.Output);
-        Assert.Contains("pit", console.Output, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Race settled", console.Output);
+            Assert.Single(session.GetStaff().Engineers);
+            Assert.Equal(1, session.GetCalendar().Count(item => item.Completed));
+            Assert.True(session.GetStandings().Sum(item => item.IsPlayer ? item.Points : 0) > 0);
+            Assert.Contains("FINAL CLASSIFICATION", console.Output);
+            Assert.Contains("pit", console.Output, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Race settled", console.Output);
+            Assert.Contains("autosave", factory.ListSaves());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -68,6 +81,45 @@ public sealed class TerminalGameAppTests
 
         Assert.Contains("SEASON CALENDAR", console.Output);
         Assert.Contains("Quit the current session", console.Output);
+    }
+
+    [Fact]
+    public void PlainCommandsCanSaveAndRestoreASession()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"grand-prix-cli-{Guid.NewGuid():N}");
+        try
+        {
+            var factory = new GameSessionFactory(new GrandPrix.Persistence.FileSaveStore(directory));
+            var console = new TestConsole();
+            var input = new ScriptedInputSource(
+                "advance",
+                "week",
+                "save career",
+                "advance",
+                "day",
+                "load career",
+                "exit",
+                "y");
+            var app = new TerminalGameApp(
+                factory.CreateNew(),
+                console,
+                input,
+                plainMode: true,
+                sessionFactory: factory);
+
+            app.Run();
+
+            Assert.Contains("Saved game to 'career'.", console.Output);
+            Assert.Contains("Loaded game from 'career'.", console.Output);
+            Assert.Equal(
+                new System.DateTime(2026, 3, 8),
+                factory.Load("career").GetDashboard().Today);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
     }
 
     private sealed class ScriptedInputSource : IInputSource

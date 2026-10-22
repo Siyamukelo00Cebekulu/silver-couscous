@@ -13,6 +13,7 @@
     <ProjectReference Include="..\GrandPrix.Domain\GrandPrix.Domain.csproj" />
     <ProjectReference Include="..\GrandPrix.Persistence\GrandPrix.Persistence.csproj" />
     <ProjectReference Include="..\GrandPrix.Series.Abstractions\GrandPrix.Series.Abstractions.csproj" />
+    <ProjectReference Include="..\GrandPrix.Series.F1\GrandPrix.Series.F1.csproj" />
   </ItemGroup>
 
 </Project>
