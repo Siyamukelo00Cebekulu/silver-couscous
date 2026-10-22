@@ -2,7 +2,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GrandPrix.Application\GrandPrix.Application.csproj" />
-    <ProjectReference Include="..\GrandPrix.Domain\GrandPrix.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
   </ItemGroup>
 
   <PropertyGroup>

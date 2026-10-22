@@ -1,6 +1,5 @@
 using System;
 using System.Globalization;
-using GrandPrix.Domain.Race;
 
 namespace GrandPrix.CLI.Input;
 
@@ -31,8 +30,8 @@ public sealed class CliCommand
     public decimal SalaryDollars { get; init; }
     public int ContractYears { get; init; }
     public double DelaySeconds { get; init; }
-    public RaceTyreCompound Tyre { get; init; }
-    public DriverMode Mode { get; init; }
+    public string Tyre { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
     public string Error { get; init; } = string.Empty;
 }
 
@@ -98,8 +97,7 @@ public static class CommandParser
             case "pit":
                 if (parts.Length < 3 || parts.Length > 4 ||
                     !int.TryParse(parts[1], out var pitCar) ||
-                    !Enum.TryParse(parts[2], true, out RaceTyreCompound tyre) ||
-                    !Enum.IsDefined(typeof(RaceTyreCompound), tyre))
+                    !TryParseTyre(parts[2], out var tyre))
                     return Invalid("Usage: pit <car-number> <soft|medium|hard|intermediate|wet> [extra-delay-seconds]");
                 var delay = 2.0;
                 if (parts.Length == 4 &&
@@ -133,24 +131,49 @@ public static class CommandParser
     private static CliCommand Invalid(string error) =>
         new() { Kind = CliCommandKind.Invalid, Error = error };
 
-    private static bool TryParseMode(string text, out DriverMode mode)
+    private static bool TryParseTyre(string text, out string tyre)
+    {
+        switch (text.ToLowerInvariant())
+        {
+            case "soft":
+                tyre = "Soft";
+                return true;
+            case "medium":
+                tyre = "Medium";
+                return true;
+            case "hard":
+                tyre = "Hard";
+                return true;
+            case "intermediate":
+                tyre = "Intermediate";
+                return true;
+            case "wet":
+                tyre = "Wet";
+                return true;
+            default:
+                tyre = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryParseMode(string text, out string mode)
     {
         switch (text.ToLowerInvariant())
         {
             case "push":
-                mode = DriverMode.Push;
+                mode = "Push";
                 return true;
             case "standard":
-                mode = DriverMode.Standard;
+                mode = "Standard";
                 return true;
             case "save-tyres":
-                mode = DriverMode.SaveTyres;
+                mode = "SaveTyres";
                 return true;
             case "save-fuel":
-                mode = DriverMode.SaveFuel;
+                mode = "SaveFuel";
                 return true;
             default:
-                mode = DriverMode.Standard;
+                mode = string.Empty;
                 return false;
         }
     }

@@ -14,6 +14,7 @@ var checks = new (string Name, Action Run)[]
 {
     ("seeded random sequence repeatability", Checks.SeededRandomIsRepeatable),
     ("race repeatability by seed", Checks.RaceIsRepeatable),
+    ("race result independence from advance step size", Checks.RaceIsStepSizeIndependent),
     ("game session seed repeatability across launches", Checks.SessionRaceIsRepeatable),
     ("independent per-car random streams", Checks.CarStreamsAreIndependent),
     ("lap progress and timing gaps update during a tick", Checks.ProgressAndGapsUpdate),
@@ -77,6 +78,32 @@ internal static class Checks
         var firstLapTimes = first.FullEventLog.OfType<LapCompletedEvent>().Select(item => item.LapTimeSec);
         var secondLapTimes = second.FullEventLog.OfType<LapCompletedEvent>().Select(item => item.LapTimeSec);
         Check(firstLapTimes.SequenceEqual(secondLapTimes), "Lap times changed for the same seed.");
+    }
+
+    public static void RaceIsStepSizeIndependent()
+    {
+        var firstSetup = CreateSetup();
+        var quarterSecond = RunWithStepSize(CreateSetup(firstSetup), 91, TimeSpan.FromSeconds(0.25));
+        var oneSecond = RunWithStepSize(CreateSetup(firstSetup), 91, TimeSpan.FromSeconds(1));
+        var wholeLaps = RunWithStepSize(CreateSetup(firstSetup), 91, null);
+
+        var classifications = new[]
+        {
+            quarterSecond.Classification,
+            oneSecond.Classification,
+            wholeLaps.Classification
+        };
+        Check(classifications.All(item => item.SequenceEqual(classifications[0])),
+            "Classification changed with the engine advance step.");
+
+        var lapTimes = new[]
+        {
+            quarterSecond.FullEventLog.OfType<LapCompletedEvent>().Select(item => item.LapTimeSec).ToArray(),
+            oneSecond.FullEventLog.OfType<LapCompletedEvent>().Select(item => item.LapTimeSec).ToArray(),
+            wholeLaps.FullEventLog.OfType<LapCompletedEvent>().Select(item => item.LapTimeSec).ToArray()
+        };
+        Check(lapTimes.All(item => item.SequenceEqual(lapTimes[0])),
+            "Lap times changed with the engine advance step.");
     }
 
     public static void CarStreamsAreIndependent()
@@ -386,6 +413,20 @@ internal static class Checks
         while (!engine.IsFinished)
             engine.AdvanceOneLap();
         return engine;
+    }
+
+    private static RaceResult RunWithStepSize(RaceSetup setup, int seed, TimeSpan? step)
+    {
+        var engine = new LapRaceEngine();
+        engine.Start(setup, new SeededRandom(seed));
+        while (!engine.IsFinished)
+        {
+            if (step.HasValue)
+                engine.Advance(step.Value);
+            else
+                engine.AdvanceOneLap();
+        }
+        return engine.GetResult();
     }
 
     private static RaceSetup CreateSetup(RaceSetup? copy = null)
