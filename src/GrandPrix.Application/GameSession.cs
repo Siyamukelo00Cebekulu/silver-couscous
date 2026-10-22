@@ -18,6 +18,7 @@ using GrandPrix.Domain.Team;
 
 namespace GrandPrix.Application;
 
+/// <summary>Coordinates the management, race-weekend, and championship state for one game.</summary>
 public sealed class GameSession : IGameSession
 {
     private static readonly int[] PointsByPosition = { 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 };
@@ -140,6 +141,9 @@ public sealed class GameSession : IGameSession
             Unread = true
         }).ToArray();
 
+    /// <summary>Builds a race grid for the next scheduled event.</summary>
+    /// <param name="laps">Number of laps in this race.</param>
+    /// <param name="seed">Seed used to make race simulation reproducible.</param>
     public RaceSetup CreateRaceSetup(int laps, int seed)
     {
         if (laps < 3 || laps > 100)
@@ -209,9 +213,11 @@ public sealed class GameSession : IGameSession
         return Weekend;
     }
 
+    /// <summary>Runs practice using the setup focus.</summary>
     public IReadOnlyList<PracticeResult> RunPractice(int seed) =>
         RunPractice(seed, PracticeFocus.Setup);
 
+    /// <summary>Runs practice and applies the selected focus to the weekend setup.</summary>
     public IReadOnlyList<PracticeResult> RunPractice(int seed, PracticeFocus focus)
     {
         if (!Enum.IsDefined(typeof(PracticeFocus), focus))
@@ -232,6 +238,9 @@ public sealed class GameSession : IGameSession
                 (TeamPaceFactor(GetTeamIndex(team)) + (team == PlayerTeam ? PlayerCarDesign.PaceFactor - 1 : 0)) *
                 (1 - driver.Pace / 10000.0);
             var setupQuality = Facilities.PracticeBonus / 100.0;
+            var tyreWearPerLap = RaceTyreModel.WearPerLap(
+                RaceTyreCompound.Medium, circuit.TyreWearFactor, driver.TyreManagement) *
+                (focus == PracticeFocus.TyreEvaluation ? 0.92 : 1);
             return new PracticeResult
             {
                 DriverName = driver.Name,
@@ -239,12 +248,12 @@ public sealed class GameSession : IGameSession
                     (focus == PracticeFocus.Setup ? -0.12 : focus == PracticeFocus.TyreEvaluation ? 0.08 : 0) +
                     random.NextGaussian(0, 0.22),
                 LongRunLapSeconds = baseLap * (1 + circuit.TyreWearFactor * 0.035) + random.NextGaussian(0, 0.3),
-                TyreWearPerLap = circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0) *
-                    (focus == PracticeFocus.TyreEvaluation ? 0.92 : 1),
+                TyreWearPerLap = tyreWearPerLap,
                 EngineerNote = focus switch
                 {
                     PracticeFocus.Setup => $"Setup confidence {Weekend.SetupConfidence:F0}%; {driver.Name} reports a predictable balance.",
-                    PracticeFocus.TyreEvaluation => $"Tyre data recommends a conservative stint; estimated wear {circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0) * 0.92:P1}/lap.",
+                    PracticeFocus.TyreEvaluation => $"Tyre data recommends a conservative stint; estimated wear " +
+                        $"{tyreWearPerLap:P1}/lap.",
                     _ => driver.Feedback >= 85
                         ? "Long-run simulation complete; race pace feedback is strong."
                         : "Long-run simulation complete; consider preserving tyres."
@@ -257,9 +266,11 @@ public sealed class GameSession : IGameSession
         return results;
     }
 
+    /// <summary>Runs qualifying with the standard soft-tyre strategy.</summary>
     public IReadOnlyList<QualifyingResult> RunQualifying(int seed) =>
         RunQualifying(seed, TyreCompoundType.Soft, QualiRisk.Normal, 2);
 
+    /// <summary>Runs qualifying using the player's tyre, risk, and run-count choices.</summary>
     public IReadOnlyList<QualifyingResult> RunQualifying(
         int seed,
         TyreCompoundType tyre,
@@ -321,6 +332,7 @@ public sealed class GameSession : IGameSession
         return Weekend.QualifyingResults;
     }
 
+    /// <summary>Returns live tyre strategy advice for one of the player's cars.</summary>
     public RaceStrategyAdvice GetTyreAdvice(RaceSnapshot snapshot, int carNumber)
     {
         if (snapshot is null)
@@ -332,25 +344,39 @@ public sealed class GameSession : IGameSession
         var measuredWearRate = Weekend.PracticeFocus == PracticeFocus.TyreEvaluation
             ? Weekend.PracticeResults.FirstOrDefault(item => item.DriverName == driver.Name)?.TyreWearPerLap
             : null;
-        var wearRate = measuredWearRate ??
-            NextEvent.Circuit.TyreWearFactor * (1 - driver.TyreManagement / 400.0);
+        var wearRate = RaceTyreModel.WearPerLap(
+            car.Tyre, NextEvent.Circuit.TyreWearFactor, driver.TyreManagement);
+        if (measuredWearRate.HasValue)
+        {
+            var standardWearRate = RaceTyreModel.WearPerLap(
+                RaceTyreCompound.Medium, NextEvent.Circuit.TyreWearFactor, driver.TyreManagement);
+            if (standardWearRate > 0)
+                wearRate *= measuredWearRate.Value / standardWearRate;
+        }
         var lapsRemaining = Math.Max(0, NextEvent.Circuit.RaceLaps - car.LapsCompleted);
-        var predictedLife = (1 - car.TyreWear) / Math.Max(0.01, wearRate * 0.09);
         var engineer = PlayerTeam.Engineers.OrderByDescending(item => item.Skill).FirstOrDefault();
         var staffName = engineer?.Name ?? "Race engineer";
         var confidence = engineer?.Skill ?? 62;
-        var pitWearThreshold = 0.70 - confidence / 1000.0;
+        var pitWearThreshold = Math.Clamp(
+            0.30 + (confidence - 70) * 0.001 + (driver.Feedback - 70) * 0.0005,
+            0.24,
+            0.42);
+        var lapsUntilPitWindow = wearRate <= 0
+            ? int.MaxValue
+            : (int)Math.Ceiling(Math.Max(0, pitWearThreshold - car.TyreWear) / wearRate);
         var recommendPit = car.TyreWear >= pitWearThreshold ||
-            (lapsRemaining > 2 && predictedLife < Math.Min(5, lapsRemaining));
+            (lapsRemaining > 2 && lapsUntilPitWindow <= 2);
         var suggestedTyre = lapsRemaining > 6 ? RaceTyreCompound.Hard : RaceTyreCompound.Soft;
         if (suggestedTyre == car.Tyre)
             suggestedTyre = RaceTyreCompound.Medium;
-        var driverAdvice = car.TyreWear >= pitWearThreshold
-            ? $"{driver.Name}: tyres are fading; box soon."
-            : $"{driver.Name}: tyre grip is holding for now.";
+        var driverAdvice = driver.Feedback >= 85
+            ? $"{driver.Name}: tyre feedback is clear; current wear is {car.TyreWear:P0}."
+            : $"{driver.Name}: tyre feedback is uncertain; monitor wear at {car.TyreWear:P0}.";
         var staffAdvice = recommendPit
-            ? $"{staffName} ({confidence}): box for {suggestedTyre}; estimated life is running short."
-            : $"{staffName} ({confidence}): stay out; estimated tyre life is adequate.";
+            ? $"{staffName} ({confidence}): box for {suggestedTyre}; the tyre window is here."
+            : lapsUntilPitWindow < lapsRemaining
+                ? $"{staffName} ({confidence}): stay out; estimated pit window in {lapsUntilPitWindow} lap(s)."
+                : $"{staffName} ({confidence}): stay out; current tyres should last to the flag.";
         return new RaceStrategyAdvice
         {
             Message = $"{staffAdvice} {driverAdvice}",
@@ -437,6 +463,7 @@ public sealed class GameSession : IGameSession
             Weekend = new RaceWeekend(NextEvent.Circuit.Name);
     }
 
+    /// <summary>Applies race points and prize money to teams and drivers.</summary>
     public IReadOnlyList<TeamRacePayout> SettleRace(RaceSetup setup, RaceResult result)
     {
         var byId = setup.Grid.ToDictionary(car => car.CarId);

@@ -7,6 +7,7 @@ public interface IRaceCommand
     EntityId CarId { get; }
 }
 
+/// <summary>Pits the car on the current lap, or the next lap if the current lap has started.</summary>
 public sealed class BoxThisLapCommand : IRaceCommand
 {
     public BoxThisLapCommand(EntityId carId, RaceTyreCompound nextTyre, double delaySeconds = 2)
@@ -21,6 +22,7 @@ public sealed class BoxThisLapCommand : IRaceCommand
     public double DelaySeconds { get; }
 }
 
+/// <summary>Changes pace on the current lap, or the next lap if the current lap has started.</summary>
 public sealed class SetDriverModeCommand : IRaceCommand
 {
     public SetDriverModeCommand(EntityId carId, DriverMode mode)

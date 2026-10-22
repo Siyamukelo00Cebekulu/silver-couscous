@@ -18,6 +18,7 @@ var checks = new (string Name, Action Run)[]
     ("independent per-car random streams", Checks.CarStreamsAreIndependent),
     ("lap progress and timing gaps update during a tick", Checks.ProgressAndGapsUpdate),
     ("pit stop, pace instruction, and finish events", Checks.PitAndFinishEvents),
+    ("pace instructions affect the next unstarted lap", Checks.PaceInstructionAffectsCurrentLap),
     ("overtake, classification, and progress", Checks.OvertakesUpdateStandings),
     ("salary validation and hiring event", Checks.HiringValidatesAndPublishes),
     ("six-month payroll runway validation", Checks.HiringProtectsPayrollRunway),
@@ -148,8 +149,32 @@ internal static class Checks
         var events = engine.GetResult().FullEventLog;
         Check(events.OfType<PitStopEvent>().Any(item => item.CarId == player.CarId &&
             Math.Abs(item.PitLaneDelaySec - setup.PitLossTimeSeconds - 3) < 0.000001), "Pit loss/delay was not recorded.");
+        Check(events.OfType<PitStopEvent>().Any(item => item.CarId == player.CarId && item.Lap == 1),
+            "A pit call issued before the lap started was delayed by an extra lap.");
         Check(events.OfType<CarFinishedEvent>().Count() == setup.Grid.Count, "Not every car finished.");
         Check(events.OfType<RaceCompletedEvent>().Any(), "Race completion event is missing.");
+    }
+
+    public static void PaceInstructionAffectsCurrentLap()
+    {
+        var baselineSetup = CreateSetup();
+        var instructedSetup = CreateSetup(baselineSetup);
+        var baseline = new LapRaceEngine();
+        var instructed = new LapRaceEngine();
+        baseline.Start(baselineSetup, new SeededRandom(31));
+        instructed.Start(instructedSetup, new SeededRandom(31));
+        instructed.Submit(new SetDriverModeCommand(
+            instructedSetup.Grid[0].CarId, DriverMode.Push));
+
+        var baselineLap = baseline.AdvanceOneLap()
+            .OfType<LapCompletedEvent>()
+            .Single(item => item.CarId == baselineSetup.Grid[0].CarId);
+        var instructedLap = instructed.AdvanceOneLap()
+            .OfType<LapCompletedEvent>()
+            .Single(item => item.CarId == instructedSetup.Grid[0].CarId);
+
+        Check(instructedLap.LapTimeSec < baselineLap.LapTimeSec,
+            "A push instruction did not improve the lap it was issued for.");
     }
 
     public static void OvertakesUpdateStandings()
@@ -291,14 +316,26 @@ internal static class Checks
         Check(hired.Succeeded, hired.Error ?? "Engineer hire failed.");
         Check(session.PlayerTeam.Engineers.Single().Skill == candidate.Skill,
             "The hired engineer's strategy skill was not retained.");
+        var practice = session.RunPractice(123, PracticeFocus.TyreEvaluation);
+        var measuredWear = practice.Single(item => item.DriverName == "Lena Hart").TyreWearPerLap;
+        Check(measuredWear > 0 && measuredWear < 0.1,
+            "Tyre evaluation did not report normalized per-lap wear.");
         var setup = session.CreateRaceSetup(5, 123);
         var engine = new LapRaceEngine();
         engine.Start(setup, new SeededRandom(123));
-        var advice = session.GetTyreAdvice(engine.GetSnapshot(), 11);
+        var snapshot = engine.GetSnapshot();
+        var initialAdvice = session.GetTyreAdvice(snapshot, 11);
+        Check(!initialAdvice.RecommendPit, "A fresh set of tyres was incorrectly called in.");
+
+        snapshot.Cars.Single(car => car.CarNumber == 11).TyreWear = 0.4;
+        var advice = session.GetTyreAdvice(snapshot, 11);
+        Check(advice.RecommendPit, "Worn tyres did not trigger a pit recommendation.");
         Check(advice.Message.Contains(candidate.Name, StringComparison.Ordinal),
             "Race strategy advice did not come from the hired engineer.");
         Check(advice.Message.Contains("Lena Hart", StringComparison.Ordinal),
             "Driver tyre feedback was missing from the engineer's recommendation.");
+        Check(advice.Message.Contains("wear is 40", StringComparison.Ordinal),
+            "Driver feedback did not report the live tyre wear.");
     }
 
     public static void DevelopmentAndFacilities()

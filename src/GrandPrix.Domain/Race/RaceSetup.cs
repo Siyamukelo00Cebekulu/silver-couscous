@@ -13,6 +13,33 @@ public enum RaceTyreCompound
     Wet
 }
 
+/// <summary>Provides the normalized 0-1 tyre wear calculation shared by simulation and strategy advice.</summary>
+public static class RaceTyreModel
+{
+    /// <summary>Returns normalized tyre wear added by one lap for a compound and driver.</summary>
+    public static double WearPerLap(RaceTyreCompound tyre, double wearFactor, int tyreManagement)
+    {
+        if (!Enum.IsDefined(typeof(RaceTyreCompound), tyre))
+            throw new ArgumentOutOfRangeException(nameof(tyre));
+        if (double.IsNaN(wearFactor) || double.IsInfinity(wearFactor) || wearFactor < 0)
+            throw new ArgumentOutOfRangeException(nameof(wearFactor));
+        if (tyreManagement < 0 || tyreManagement > 100)
+            throw new ArgumentOutOfRangeException(nameof(tyreManagement));
+
+        var compoundWear = tyre switch
+        {
+            RaceTyreCompound.Soft => 3.2,
+            RaceTyreCompound.Medium => 2.2,
+            RaceTyreCompound.Hard => 1.5,
+            RaceTyreCompound.Intermediate => 2.7,
+            RaceTyreCompound.Wet => 2.4,
+            _ => throw new ArgumentOutOfRangeException(nameof(tyre))
+        };
+        return compoundWear * wearFactor *
+            (1 - tyreManagement / 100.0 * 0.3) / 100.0;
+    }
+}
+
 public enum DriverMode
 {
     Push,

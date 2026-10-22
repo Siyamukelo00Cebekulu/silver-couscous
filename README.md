@@ -48,7 +48,7 @@ through the calendar; payroll is charged on the first day of each month.
   drivers.
 
 ## Terminal interface
-
+`
 In an interactive terminal, use the **Up/Down arrow keys** (or W/S) to move
 through the menu and press **Enter** to select. Number keys are shortcuts;
 Escape exits. When input is redirected, enter a menu number or command on a

@@ -94,6 +94,10 @@ public sealed class LapRaceEngine : IRaceEngine
             PrepareLap(car, null);
     }
 
+    /// <summary>
+    /// Queues a race instruction for the current lap if it has not progressed,
+    /// otherwise for the next lap.
+    /// </summary>
     public void Submit(IRaceCommand command)
     {
         EnsureStarted();
@@ -123,7 +127,7 @@ public sealed class LapRaceEngine : IRaceEngine
             throw new ArgumentOutOfRangeException(nameof(elapsed), "Elapsed time must be greater than zero.");
 
         var emitted = new List<RaceEvent>();
-        ApplyQueuedCommands();
+        ApplyQueuedCommands(emitted);
         var remainingSeconds = elapsed.TotalSeconds;
 
         while (remainingSeconds > 0 && !IsFinished)
@@ -231,21 +235,35 @@ public sealed class LapRaceEngine : IRaceEngine
         };
     }
 
-    private void ApplyQueuedCommands()
+    private void ApplyQueuedCommands(List<RaceEvent> emitted)
     {
         foreach (var command in _queuedCommands)
         {
             var car = _cars[command.CarId];
+            var lapHasNotStarted = car.LapDurationSeconds > 0 &&
+                car.LapRemainingSeconds >= car.LapDurationSeconds - 0.000001;
             switch (command)
             {
                 case BoxThisLapCommand box:
-                    car.NextTyre = box.NextTyre;
-                    car.NextPitDelaySeconds = box.DelaySeconds;
+                    if (lapHasNotStarted)
+                        ApplyPitStop(car, box.NextTyre,
+                            _setup!.PitLossTimeSeconds + box.DelaySeconds, emitted);
+                    else
+                    {
+                        car.NextTyre = box.NextTyre;
+                        car.NextPitDelaySeconds = box.DelaySeconds;
+                    }
                     break;
                 case SetDriverModeCommand mode:
-                    car.NextMode = mode.Mode;
+                    if (lapHasNotStarted)
+                        car.CurrentMode = mode.Mode;
+                    else
+                        car.NextMode = mode.Mode;
                     break;
             }
+
+            if (lapHasNotStarted)
+                RecalculateCurrentLap(car);
         }
         _queuedCommands.Clear();
     }
@@ -259,44 +277,15 @@ public sealed class LapRaceEngine : IRaceEngine
 
         if (car.NextTyre.HasValue)
         {
-            car.CurrentTyre = car.NextTyre.Value;
-            car.TyreWear = 0;
-            car.PitOnCurrentLap = true;
-            var pitDelay = _setup!.PitLossTimeSeconds + car.NextPitDelaySeconds;
-            var stationaryTime = Math.Max(1.5, 2.2 + car.Random.NextGaussian(0, 0.25));
-            car.CurrentPitDelaySeconds = pitDelay + stationaryTime;
-            car.PitStops++;
-            Emit(new PitStopEvent
-            {
-                RaceTime = _raceTime,
-                Lap = lap,
-                CarId = car.Setup.CarId,
-                DriverName = car.Setup.DriverName,
-                Fitted = car.CurrentTyre,
-                StationaryTimeSec = stationaryTime,
-                PitLaneDelaySec = pitDelay
-            }, emitted);
+            ApplyPitStop(car, car.NextTyre.Value,
+                _setup!.PitLossTimeSeconds + car.NextPitDelaySeconds, emitted, lap);
             car.NextTyre = null;
             car.NextPitDelaySeconds = 0;
         }
         else if (car.Setup.IsAi && lap == car.Setup.AiPitLap)
         {
-            car.CurrentTyre = ChooseNextTyre(car.CurrentTyre);
-            car.TyreWear = 0;
-            car.PitOnCurrentLap = true;
-            var stationaryTime = Math.Max(1.5, 2.2 + car.Random.NextGaussian(0, 0.25));
-            car.CurrentPitDelaySeconds = _setup!.PitLossTimeSeconds + stationaryTime;
-            car.PitStops++;
-            Emit(new PitStopEvent
-            {
-                RaceTime = _raceTime,
-                Lap = lap,
-                CarId = car.Setup.CarId,
-                DriverName = car.Setup.DriverName,
-                Fitted = car.CurrentTyre,
-                StationaryTimeSec = stationaryTime,
-                PitLaneDelaySec = _setup!.PitLossTimeSeconds
-            }, emitted);
+            ApplyPitStop(car, ChooseNextTyre(car.CurrentTyre),
+                _setup!.PitLossTimeSeconds, emitted, lap);
         }
 
         if (car.Setup.IsAi)
@@ -314,6 +303,39 @@ public sealed class LapRaceEngine : IRaceEngine
         car.LapRemainingSeconds = car.LapDurationSeconds;
     }
 
+    private void ApplyPitStop(
+        CarRuntime car,
+        RaceTyreCompound tyre,
+        double pitLaneDelay,
+        List<RaceEvent>? emitted,
+        int? lap = null)
+    {
+        car.CurrentTyre = tyre;
+        car.TyreWear = 0;
+        car.PitOnCurrentLap = true;
+        var stationaryTime = Math.Max(1.5, 2.2 + car.Random.NextGaussian(0, 0.25));
+        car.CurrentPitDelaySeconds = pitLaneDelay + stationaryTime;
+        car.PitStops++;
+        Emit(new PitStopEvent
+        {
+            RaceTime = _raceTime,
+            Lap = lap ?? car.LapsCompleted + 1,
+            CarId = car.Setup.CarId,
+            DriverName = car.Setup.DriverName,
+            Fitted = tyre,
+            StationaryTimeSec = stationaryTime,
+            PitLaneDelaySec = pitLaneDelay
+        }, emitted);
+    }
+
+    private void RecalculateCurrentLap(CarRuntime car)
+    {
+        var elapsedSeconds = car.LapDurationSeconds - car.LapRemainingSeconds;
+        car.LapDurationSeconds = CalculateLapTime(car) +
+            (car.PitOnCurrentLap ? car.CurrentPitDelaySeconds : 0);
+        car.LapRemainingSeconds = Math.Max(0, car.LapDurationSeconds - elapsedSeconds);
+    }
+
     private void CompleteLap(CarRuntime car, List<RaceEvent> emitted)
     {
         car.LapsCompleted++;
@@ -321,8 +343,8 @@ public sealed class LapRaceEngine : IRaceEngine
         car.LastLapTimeSeconds = car.LapDurationSeconds - (car.PitOnCurrentLap
             ? car.CurrentPitDelaySeconds
             : 0);
-        car.TyreWear = Math.Min(1, car.TyreWear + GetTyreWearRate(car.CurrentTyre) *
-            _setup!.TyreWearFactor * (1 - car.Setup.TyreManagement / 100.0 * 0.3) / 100.0);
+        car.TyreWear = Math.Min(1, car.TyreWear + RaceTyreModel.WearPerLap(
+            car.CurrentTyre, _setup!.TyreWearFactor, car.Setup.TyreManagement));
 
         Emit(new LapCompletedEvent
         {
@@ -447,16 +469,6 @@ public sealed class LapRaceEngine : IRaceEngine
         RaceTyreCompound.Hard => 0.97,
         RaceTyreCompound.Intermediate => 0.94,
         RaceTyreCompound.Wet => 0.91,
-        _ => throw new ArgumentOutOfRangeException(nameof(tyre))
-    };
-
-    private static double GetTyreWearRate(RaceTyreCompound tyre) => tyre switch
-    {
-        RaceTyreCompound.Soft => 3.2,
-        RaceTyreCompound.Medium => 2.2,
-        RaceTyreCompound.Hard => 1.5,
-        RaceTyreCompound.Intermediate => 2.7,
-        RaceTyreCompound.Wet => 2.4,
         _ => throw new ArgumentOutOfRangeException(nameof(tyre))
     };
 

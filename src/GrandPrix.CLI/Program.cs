@@ -418,13 +418,14 @@ static void RunWeekend(GameSession session)
     {
         if (!Console.IsInputRedirected)
         {
+            var inputReceived = false;
             while (Console.KeyAvailable)
             {
                 var key = Console.ReadKey(intercept: true).Key;
+                inputReceived = true;
                 if (key == ConsoleKey.Spacebar)
                 {
                     paused = !paused;
-                    DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
                 }
                 else if (key == ConsoleKey.Q)
                 {
@@ -468,6 +469,8 @@ static void RunWeekend(GameSession session)
                     }
                 }
             }
+            if (inputReceived && !fastForward)
+                DrawRaceFrame(circuit.Name, snapshot, oldPositions, eventFeed, advice, paused, selectedCarNumber, selectedPitTyre);
             while (paused && !fastForward)
             {
                 Thread.Sleep(100);

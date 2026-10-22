@@ -22,10 +22,13 @@ times.
 
 The race screen refreshes live after each lap, taking about 1.2 seconds per lap
 so the live timing and staff feedback can be followed. It shows standings, gaps,
-tyre wear, position changes, track events, and staff/driver tyre advice. Use the
+tyre wear, position changes, track events, and staff/driver tyre advice. Staff
+recommendations estimate the pit window from the same compound wear model used
+by the race simulation, and update with tyre wear and driver feedback. Use the
 arrow keys to select car #11 or #12; press **A** to accept a recommended pit
 call, **T** to select a tyre and **P** to pit, or **M** to cycle the driver's
-pace mode. Press Space to pause/resume or Q to fast-forward.
+pace mode. Controls and their feedback appear immediately. Press Space to
+pause/resume or Q to fast-forward.
 
 Use **Hire engineer** to recruit from the staff market. Engineers have a
 strategy skill, require a signing payment, and add salary to monthly payroll.
