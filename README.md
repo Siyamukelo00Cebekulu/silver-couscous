@@ -95,3 +95,5 @@ dotnet test GrandPrixTeamPrincipal.sln
 The source tree separates Core abstractions, Domain simulation, Application
 session orchestration, and the CLI. Additional persistence, series, AI, Unity
 bridge, test, and tool projects are kept in their respective directories.
+For a project map, key class responsibilities, and the end-to-end game flow,
+see the [project and code guide](docs/architecture/project-guide.md).
