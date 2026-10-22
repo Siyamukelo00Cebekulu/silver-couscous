@@ -113,6 +113,9 @@ public sealed class TerminalGameApp
 
     private void RenderHub(int selected)
     {
+        if (!_plainMode)
+            _console.Clear();
+
         var dashboard = _session.GetDashboard();
         _console.Write(new Rule("GRAND PRIX TEAM PRINCIPAL"));
 
@@ -972,6 +975,7 @@ public sealed class TerminalGameApp
         var selected = 0;
         while (true)
         {
+            _console.Clear();
             _console.Write(new Rule(title));
             var table = new Table();
             table.AddColumn("Select");
