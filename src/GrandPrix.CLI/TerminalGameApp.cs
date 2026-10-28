@@ -173,7 +173,7 @@ public sealed class TerminalGameApp
             menu.AddRow($"{marker} {index + 1}", MenuItems[index].Label);
         }
         _console.Write(menu);
-        WriteFooter("↑/↓ or W/S navigate · Enter select · 1-9 shortcuts · Esc/Backspace back · ? help · Q quit");
+        WriteFooter("↑/↓ or W/S navigat · Enter select · 1-9 shortcuts · Esc/Backspace back · ? help · Q quit");
         if (!string.IsNullOrWhiteSpace(_status))
             WriteStatus(_status);
     }
