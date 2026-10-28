@@ -101,9 +101,8 @@ public sealed class TerminalGameApp
                     ConfirmQuit();
                     break;
                 default:
-                    if (key.Key >= ConsoleKey.D1 && key.Key <= ConsoleKey.D9)
+                    if (TryGetMenuIndex(key.Key, out var index))
                     {
-                        var index = (int)key.Key - (int)ConsoleKey.D1;
                         selected = index;
                         RunMenuCommand(MenuItems[index].Command);
                     }
@@ -113,6 +112,56 @@ public sealed class TerminalGameApp
                     }
                     break;
             }
+        }
+    }
+
+    private static bool TryGetMenuIndex(ConsoleKey key, out int index)
+    {
+        switch (key)
+        {
+            case ConsoleKey.D1:
+            case ConsoleKey.NumPad1:
+                index = 0;
+                return true;
+            case ConsoleKey.D2:
+            case ConsoleKey.NumPad2:
+                index = 1;
+                return true;
+            case ConsoleKey.D3:
+            case ConsoleKey.NumPad3:
+                index = 2;
+                return true;
+            case ConsoleKey.D4:
+            case ConsoleKey.NumPad4:
+                index = 3;
+                return true;
+            case ConsoleKey.D5:
+            case ConsoleKey.NumPad5:
+                index = 4;
+                return true;
+            case ConsoleKey.D6:
+            case ConsoleKey.NumPad6:
+                index = 5;
+                return true;
+            case ConsoleKey.D7:
+            case ConsoleKey.NumPad7:
+                index = 6;
+                return true;
+            case ConsoleKey.D8:
+            case ConsoleKey.NumPad8:
+                index = 7;
+                return true;
+            case ConsoleKey.D9:
+            case ConsoleKey.NumPad9:
+                index = 8;
+                return true;
+            case ConsoleKey.D0:
+            case ConsoleKey.NumPad0:
+                index = 9;
+                return true;
+            default:
+                index = -1;
+                return false;
         }
     }
 
@@ -173,7 +222,7 @@ public sealed class TerminalGameApp
             menu.AddRow($"{marker} {index + 1}", MenuItems[index].Label);
         }
         _console.Write(menu);
-        WriteFooter("↑/↓ or W/S navigat · Enter select · 1-9 shortcuts · Esc/Backspace back · ? help · Q quit");
+        WriteFooter("↑/↓ or W/S navigat · Enter select · 1-0 shortcuts · Esc/Backspace back · ? help · Q quit");
         if (!string.IsNullOrWhiteSpace(_status))
             WriteStatus(_status);
     }

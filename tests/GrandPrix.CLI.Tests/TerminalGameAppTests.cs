@@ -84,6 +84,23 @@ public sealed class TerminalGameAppTests
     }
 
     [Fact]
+    public void InteractiveNumberShortcutsCanAccessLaterMenuItems()
+    {
+        var console = new TestConsole();
+        var input = new ScriptedKeyInputSource(
+            new ConsoleKeyInfo('0', ConsoleKey.D0, false, false, false),
+            new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false),
+            new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false),
+            new ConsoleKeyInfo('y', ConsoleKey.Y, false, false, false),
+            new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false));
+        var app = new TerminalGameApp(new GameSession(), console, input);
+
+        app.Run();
+
+        Assert.Contains("ADVANCE CALENDAR", console.Output);
+    }
+
+    [Fact]
     public void PlainCommandsCanSaveAndRestoreASession()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"grand-prix-cli-{Guid.NewGuid():N}");
